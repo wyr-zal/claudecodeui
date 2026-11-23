@@ -772,6 +772,12 @@
     }
   }
 
+  /* 聊天正文、输入和附属提示都跟随实际面板宽度，避免侧栏开合后留下固定空白。 */
+  .chat-content-width {
+    min-width: 0;
+    max-width: 100%;
+  }
+
   /* Text wrapping improvements */
   .chat-message {
     word-wrap: break-word;
