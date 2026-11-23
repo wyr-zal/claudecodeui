@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowDownIcon } from 'lucide-react';
 
@@ -48,6 +49,9 @@ type ChatInterfaceProps = {
   newSessionTrigger?: number;
   onTaskClick?: (...args: unknown[]) => void;
   onShowAllTasks?: (() => void) | null;
+  compactMode?: boolean;
+  onToggleCompactMode?: () => void;
+  compactNavigation?: ReactNode;
 };
 
 /**
@@ -71,6 +75,9 @@ function ChatInterface({
   externalMessageUpdate,
   newSessionTrigger,
   onShowAllTasks,
+  compactMode = false,
+  onToggleCompactMode,
+  compactNavigation,
 }: ChatInterfaceProps) {
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings();
   const { subscribe, isConnected } = useWebSocket();
@@ -576,6 +583,9 @@ function ChatInterface({
           )}
 
           <ChatComposer
+          compactMode={compactMode && isActive}
+          onToggleCompactMode={onToggleCompactMode}
+          compactNavigation={compactNavigation}
           pendingPermissionRequests={pendingPermissionRequests}
           handlePermissionDecision={handlePermissionDecision}
           handleGrantToolPermission={handleGrantToolPermission}

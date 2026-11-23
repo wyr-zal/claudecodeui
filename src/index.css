@@ -778,6 +778,59 @@
     max-width: 100%;
   }
 
+  /* 简洁模式沿用原输入框，通过布局呈现悬浮外观，仍为消息保留实际空间。 */
+  .chat-composer-shell[data-compact="true"] {
+    padding: 8px 12px max(8px, env(safe-area-inset-bottom));
+  }
+
+  .chat-composer-shell[data-compact="true"] .chat-content-width {
+    max-width: 40rem;
+  }
+
+  .chat-composer-shell[data-compact="true"] [data-slot="prompt-input"] {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 4px;
+    padding: 6px;
+    box-shadow: 0 4px 24px hsl(var(--foreground) / 0.1);
+  }
+
+  .chat-composer-shell[data-compact="true"] [data-slot="prompt-input-header"],
+  .chat-composer-shell[data-compact="true"] .composer-options {
+    order: 0;
+    flex-basis: 100%;
+  }
+
+  .chat-composer-shell[data-compact="true"] .composer-options {
+    max-height: min(40vh, 20rem);
+    overflow-y: auto;
+    padding: 4px;
+  }
+
+  .chat-composer-shell[data-compact="true"] [data-slot="prompt-input-body"] {
+    order: 1;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .chat-composer-shell[data-compact="true"] [data-slot="prompt-input-footer"] {
+    display: contents;
+  }
+
+  .chat-composer-shell[data-compact="true"] .composer-send-actions {
+    order: 2;
+  }
+
+  .chat-composer-shell[data-compact="true"] .chat-input-placeholder {
+    padding-inline: 8px;
+    min-height: 40px;
+  }
+
+  .chat-composer-shell[data-compact="true"] .composer-shortcuts {
+    display: none;
+  }
+
   /* Text wrapping improvements */
   .chat-message {
     word-wrap: break-word;
