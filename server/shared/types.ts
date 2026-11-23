@@ -1577,6 +1577,8 @@ export type FileTreeProjectGateway = {
  */
 export type FileTreeWorkspaceGateway = {
   rootPath: string;
+  /** File Tree 的额外可读工作区；未传时兼容仅使用默认 rootPath 的旧适配器。 */
+  rootPaths?: string[];
   validatePath(candidatePath: string): Promise<WorkspacePathValidationResult>;
   /**
    * Resolves a path readable outside the workspace root — the system temp

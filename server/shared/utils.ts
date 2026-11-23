@@ -1,12 +1,10 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import {
-  access,
   lstat,
   mkdir,
   readFile,
   readdir,
-  readlink,
   realpath,
   stat,
   writeFile,
@@ -198,12 +196,27 @@ export function errorMessage(error: unknown): string {
 // ---------------------------
 //----------------- WORKSPACE PATH VALIDATION UTILITIES ------------
 /**
- * Root directory that all workspace/project paths must stay under.
- *
- * This is resolved from `WORKSPACES_ROOT` when configured; otherwise it falls
- * back to the current user's home directory.
+ * File Tree 使用的默认目录及 ~ 的展开位置，保留现有单目录配置行为。
+ * 项目路径还可位于 WORKSPACES_EXTRA_ROOTS 指定的额外目录中。
  */
 export const WORKSPACES_ROOT = process.env.WORKSPACES_ROOT || os.homedir();
+
+// Windows 需带盘符或完整 UNC 根，避免 \projects 随启动盘符改变授权范围。
+function isAbsoluteWorkspaceRoot(root: string): boolean {
+  if (!path.isAbsolute(root)) return false;
+  if (process.platform !== 'win32') return true;
+  const normalized = normalizeProjectPath(root);
+  return /^[a-zA-Z]:\\/.test(normalized) || /^\\\\[^\\]+\\[^\\]+(?:\\|$)/.test(normalized);
+}
+
+/** Projects 用于路径校验；File Tree 复用同一允许目录列表以支持项目外只读预览。 */
+export const WORKSPACE_ROOTS = [...new Set([
+  WORKSPACES_ROOT,
+  ...(process.env.WORKSPACES_EXTRA_ROOTS || '')
+    .split(path.delimiter)
+    .map((root) => root.trim())
+    .filter(isAbsoluteWorkspaceRoot),
+])];
 
 /**
  * System-critical paths that must never be used as workspace roots.
@@ -373,114 +386,96 @@ export function normalizeProjectPath(inputPath: string): string {
   return normalized.replace(/[\\/]+$/, '');
 }
 
+function isWithinWorkspaceRoot(targetPath: string, root: string): boolean {
+  // relative 按平台处理大小写和盘符，且不会把 projects-other 误认成 projects 的子目录。
+  const relativePath = path.relative(root, targetPath);
+  return relativePath === '' || (
+    !path.isAbsolute(relativePath)
+    && relativePath !== '..'
+    && !relativePath.startsWith(`..${path.sep}`)
+  );
+}
+
+function workspaceSystemDirectoryError(targetPath: string): string | undefined {
+  if (targetPath === '/') {
+    return 'Cannot use system-critical directories as workspace locations';
+  }
+
+  for (const forbiddenPath of FORBIDDEN_WORKSPACE_PATHS) {
+    // Unix 系统目录不映射成 Windows 当前盘符下的同名目录。
+    if (forbiddenPath === '/' || (process.platform === 'win32' && forbiddenPath.startsWith('/'))) continue;
+    const normalizedForbiddenPath = normalizeProjectPath(forbiddenPath);
+    if (!isWithinWorkspaceRoot(targetPath, normalizedForbiddenPath)) continue;
+    if (normalizedForbiddenPath === '/var' && (
+      isWithinWorkspaceRoot(targetPath, '/var/tmp')
+      || isWithinWorkspaceRoot(targetPath, '/var/folders')
+    )) continue;
+    return `Cannot create workspace in system directory: ${forbiddenPath}`;
+  }
+
+  return undefined;
+}
+
+async function resolveWorkspacePath(absolutePath: string): Promise<string> {
+  // 新项目可有多层尚未创建的目录；从最近存在的祖先解析链接，再拼回未创建部分。
+  const missingSegments: string[] = [];
+  let ancestorPath = absolutePath;
+  while (true) {
+    try {
+      const resolvedAncestor = await realpath(ancestorPath);
+      return normalizeProjectPath(path.join(resolvedAncestor, ...missingSegments.reverse()));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      const existingEntry = await lstat(ancestorPath).catch((statError: NodeJS.ErrnoException) => {
+        if (statError.code !== 'ENOENT') throw statError;
+        return null;
+      });
+      // 断开的链接并非尚未创建的目录，不能跳过它后按链接名称放行。
+      if (existingEntry) throw error;
+      const parentPath = path.dirname(ancestorPath);
+      if (parentPath === ancestorPath) throw error;
+      missingSegments.push(path.basename(ancestorPath));
+      ancestorPath = parentPath;
+    }
+  }
+}
+
 /**
- * Validates that a user-supplied workspace path is safe to use.
- *
- * Call this before any filesystem mutation that creates or registers projects.
- * The function resolves symlinks, enforces `WORKSPACES_ROOT` containment, and
- * blocks known system directories.
+ * Projects 的创建/克隆与 File Tree 的目录浏览/创建共用此路径策略。
+ * 默认目录及额外目录均须解析真实路径后匹配；不允许越界、系统目录或链接逃逸。
+ * 调用前需加载环境配置，调用后才可创建或登记项目目录。
  */
 export async function validateWorkspacePath(requestedPath: string): Promise<WorkspacePathValidationResult> {
   try {
     const normalizedRequestedPath = normalizeProjectPath(requestedPath);
     if (!normalizedRequestedPath) {
-      return {
-        valid: false,
-        error: 'Workspace path is required',
-      };
+      return { valid: false, error: 'Workspace path is required' };
     }
 
     const absolutePath = path.resolve(normalizedRequestedPath);
-    const normalizedPath = normalizeProjectPath(absolutePath);
+    const inputError = workspaceSystemDirectoryError(normalizeProjectPath(absolutePath));
+    if (inputError) return { valid: false, error: inputError };
 
-    if (FORBIDDEN_WORKSPACE_PATHS.includes(normalizedPath) || normalizedPath === '/') {
-      return {
-        valid: false,
-        error: 'Cannot use system-critical directories as workspace locations',
-      };
-    }
+    const resolvedPath = await resolveWorkspacePath(absolutePath);
+    const resolvedError = workspaceSystemDirectoryError(resolvedPath);
+    if (resolvedError) return { valid: false, error: resolvedError };
 
-    for (const forbiddenPath of FORBIDDEN_WORKSPACE_PATHS) {
-      const normalizedForbiddenPath = normalizeProjectPath(forbiddenPath);
-      if (
-        normalizedPath === normalizedForbiddenPath
-        || normalizedPath.startsWith(`${normalizedForbiddenPath}${path.sep}`)
-      ) {
-        // Allow specific user-writable folders under /var.
-        if (
-          normalizedForbiddenPath === '/var'
-          && (normalizedPath.startsWith('/var/tmp') || normalizedPath.startsWith('/var/folders'))
-        ) {
-          continue;
-        }
-
-        return {
-          valid: false,
-          error: `Cannot create workspace in system directory: ${forbiddenPath}`,
-        };
-      }
-    }
-
-    let resolvedPath = normalizeProjectPath(absolutePath);
-    try {
-      await access(absolutePath);
-      resolvedPath = normalizeProjectPath(await realpath(absolutePath));
-    } catch (error) {
-      const fileError = error as NodeJS.ErrnoException;
-      if (fileError.code !== 'ENOENT') {
-        throw fileError;
-      }
-
-      const parentPath = path.dirname(absolutePath);
+    for (const root of WORKSPACE_ROOTS) {
+      let resolvedRoot: string;
       try {
-        const parentRealPath = await realpath(parentPath);
-        resolvedPath = normalizeProjectPath(path.join(parentRealPath, path.basename(absolutePath)));
-      } catch (parentError) {
-        const parentFileError = parentError as NodeJS.ErrnoException;
-        if (parentFileError.code !== 'ENOENT') {
-          throw parentFileError;
-        }
+        resolvedRoot = normalizeProjectPath(await realpath(root));
+      } catch {
+        // 未挂载或不可访问的额外目录不影响其他有效目录，也不会被自动创建。
+        continue;
       }
-    }
-
-    const resolvedWorkspaceRoot = normalizeProjectPath(await realpath(WORKSPACES_ROOT));
-    if (
-      !resolvedPath.startsWith(`${resolvedWorkspaceRoot}${path.sep}`)
-      && resolvedPath !== resolvedWorkspaceRoot
-    ) {
-      return {
-        valid: false,
-        error: `Workspace path must be within the allowed workspace root: ${WORKSPACES_ROOT}`,
-      };
-    }
-
-    try {
-      await access(absolutePath);
-      const pathStats = await lstat(absolutePath);
-      if (pathStats.isSymbolicLink()) {
-        const symlinkTarget = await readlink(absolutePath);
-        const resolvedSymlinkPath = path.resolve(path.dirname(absolutePath), symlinkTarget);
-        const realSymlinkPath = await realpath(resolvedSymlinkPath);
-        if (
-          !realSymlinkPath.startsWith(`${resolvedWorkspaceRoot}${path.sep}`)
-          && realSymlinkPath !== resolvedWorkspaceRoot
-        ) {
-          return {
-            valid: false,
-            error: 'Symlink target is outside the allowed workspace root',
-          };
-        }
-      }
-    } catch (error) {
-      const fileError = error as NodeJS.ErrnoException;
-      if (fileError.code !== 'ENOENT') {
-        throw fileError;
+      if (isWithinWorkspaceRoot(resolvedPath, resolvedRoot)) {
+        return { valid: true, resolvedPath };
       }
     }
 
     return {
-      valid: true,
-      resolvedPath,
+      valid: false,
+      error: `Workspace path must be within an allowed workspace root: ${WORKSPACE_ROOTS.join(', ')}`,
     };
   } catch (error) {
     return {
