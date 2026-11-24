@@ -1252,6 +1252,7 @@ export function buildDefaultProviderCurrentActiveModel(
 ): ProviderCurrentActiveModel {
   return {
     model: models.DEFAULT,
+    isFallback: true,
   };
 }
 
