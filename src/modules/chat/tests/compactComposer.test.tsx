@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+
 import { createRef } from 'react';
 import type { ComponentProps } from 'react';
 import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
@@ -6,8 +7,10 @@ import { afterEach, beforeEach, test, vi } from 'vitest';
 
 import '@/modules/i18n';
 import ChatComposer from '@/modules/chat/composer/ChatComposer';
+import ChatMessagesPane from '@/modules/chat/transcript/ChatMessagesPane';
 import { useEscapeToAbortSession } from '@/modules/chat/hooks/useEscapeToAbortSession';
 import { UiPreferencesProvider } from '@/shared/context/UiPreferencesContext';
+import type { Project, ProviderModelActions } from '@/shared/types';
 
 type Props = ComponentProps<typeof ChatComposer>;
 const noop = () => undefined;
@@ -102,19 +105,30 @@ test('模式切换保留同一输入节点、草稿和附件', () => {
   assert.equal(screen.getByPlaceholderText('Message'), textarea);
 });
 
-test('简洁模式按需展开工具，Escape 仅关闭工具', () => {
+test('简洁模式左下角常驻附件与 Token，其余工具按需展开，Escape 仅关闭工具', () => {
   const abort = vi.fn();
   const value = props({ compactMode: true, isLoading: true, onAbortSession: abort });
-  render(view(value));
+  const { container } = render(view(value));
   renderHook(() => useEscapeToAbortSession({
     canAbortSession: true, onAbortSession: abort, composerRef: value.textareaRef,
   }));
+  const textarea = screen.getByPlaceholderText('Message') as HTMLTextAreaElement;
+  assert.equal(textarea.getAttribute('rows'), '1');
+  const quickActions = container.querySelector('.composer-compact-quick-actions');
+  assert.ok(quickActions);
+  const attachButton = screen.getByRole('button', { name: 'Attach files' });
+  const tokenButton = screen.getByRole('button', { name: 'Show token usage' });
+  assert.ok(quickActions.contains(attachButton));
+  assert.ok(quickActions.contains(tokenButton));
+
   const more = screen.getByRole('button', { name: 'More chat tools' });
   assert.equal(more.getAttribute('aria-expanded'), 'false');
-  assert.equal(screen.queryByRole('button', { name: 'Attach files' }), null);
+  assert.equal(screen.queryByRole('button', { name: /^Default Mode:/ }), null);
   fireEvent.click(more);
   assert.equal(more.getAttribute('aria-expanded'), 'true');
-  assert.ok(screen.getByRole('button', { name: 'Attach files' }));
+  assert.equal(screen.getAllByRole('button', { name: 'Attach files' }).length, 1);
+  assert.equal(screen.getAllByRole('button', { name: 'Show token usage' }).length, 1);
+  assert.ok(screen.getByRole('button', { name: /^Default Mode:/ }));
   fireEvent.keyDown(more, { key: 'Escape' });
   assert.equal(more.getAttribute('aria-expanded'), 'false');
   assert.equal(abort.mock.calls.length, 0);
@@ -156,4 +170,88 @@ test('问题面板替代输入时仍可退出简洁模式', () => {
   assert.equal(screen.queryByPlaceholderText('Message'), null);
   fireEvent.click(screen.getByRole('button', { name: 'Exit compact mode' }));
   assert.equal(exit.mock.calls.length, 1);
+});
+
+test('简洁模式仅在交互卡片保留点击并同步消息区底部留白', () => {
+  const { container: composerRoot } = render(view(props({
+    compactMode: true,
+    queuedDraft: { content: '排队发送的内容', attachments: [] },
+    isEditingSentMessage: true,
+    scheduledMessages: [{
+      id: 'sched-1',
+      sessionId: 's1',
+      content: '定时任务',
+      options: {},
+      scheduledFor: new Date().toISOString(),
+      status: 'pending',
+      failureReason: null,
+      createdAt: new Date().toISOString(),
+    }],
+  })));
+
+  const shell = composerRoot.querySelector('.chat-composer-shell');
+  assert.equal(shell?.getAttribute('data-compact'), 'true');
+  assert.ok(shell?.querySelector('.composer-floating-surface'));
+  assert.equal(shell?.querySelectorAll('.composer-floating-card').length, 3);
+
+  const paneProject: Project = { projectId: 'p1', path: '/repo', fullPath: '/repo', displayName: 'Repo' };
+  const asyncNoop = async () => undefined;
+  const providerModelActions: ProviderModelActions = {
+    create: asyncNoop,
+    update: asyncNoop,
+    remove: asyncNoop,
+    setCustomModelsOnly: asyncNoop,
+  };
+  const paneProps: ComponentProps<typeof ChatMessagesPane> = {
+    scrollContainerRef: createRef<HTMLDivElement>() as ComponentProps<typeof ChatMessagesPane>['scrollContainerRef'],
+    onWheel: noop,
+    onTouchMove: noop,
+    isLoadingSessionMessages: false,
+    isProcessing: false,
+    hasActivityIndicator: false,
+    chatMessages: [],
+    selectedSession: null,
+    currentSessionId: null,
+    provider: 'claude',
+    setProvider: noop,
+    textareaRef: createRef<HTMLTextAreaElement>() as ComponentProps<typeof ChatMessagesPane>['textareaRef'],
+    providerModels: { claude: '', cursor: '', codex: '', opencode: '' },
+    setProviderModel: noop,
+    providerModelCatalog: {},
+    providerModelActions,
+    providerModelsLoading: false,
+    tasksEnabled: false,
+    isTaskMasterInstalled: false,
+    setInput: noop,
+    isLoadingMoreMessages: false,
+    hasMoreMessages: false,
+    totalMessages: 0,
+    sessionMessagesCount: 0,
+    visibleMessageCount: 100,
+    visibleMessages: [],
+    loadEarlierMessages: noop,
+    revealMessage: noop,
+    sendMessage: noop,
+    loadAllMessages: noop,
+    allMessagesLoaded: false,
+    isLoadingAllMessages: false,
+    loadAllJustFinished: false,
+    showLoadAllOverlay: false,
+    createDiff: noop,
+    onGrantToolPermission: () => ({ success: true }),
+    selectedProject: paneProject,
+  };
+
+  const { container: paneRoot, rerender } = render(
+    <ChatMessagesPane {...paneProps} isCompactFloating floatingBottomInset={136} />,
+  );
+  const pane = paneRoot.querySelector('.chat-messages-pane') as HTMLElement | null;
+  assert.equal(pane?.style.paddingBottom, '136px');
+
+  rerender(<ChatMessagesPane {...paneProps} isCompactFloating floatingBottomInset={0} hasActivityIndicator />);
+  assert.equal(pane?.style.paddingBottom, '');
+  assert.ok(pane?.className.includes('pb-32'));
+
+  rerender(<ChatMessagesPane {...paneProps} isCompactFloating={false} floatingBottomInset={0} hasActivityIndicator={false} />);
+  assert.ok(pane?.className.includes('pb-3'));
 });
