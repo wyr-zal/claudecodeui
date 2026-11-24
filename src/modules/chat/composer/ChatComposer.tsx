@@ -373,15 +373,27 @@ export default function ChatComposer({
         }
       }}
     >
-      {compactMode && hasQuestionPanel && onToggleCompactMode && (
-        <div className="mx-auto mb-2 flex max-w-[40rem] justify-end">
-          <PromptInputButton
-            onClick={onToggleCompactMode}
-            aria-label={t('composer.exitCompactMode')}
-            className="pointer-events-auto border border-border/50 bg-card/95 shadow-sm backdrop-blur-md"
-          >
-            <Maximize2 />
-          </PromptInputButton>
+      {compactMode && hasQuestionPanel && (compactLeadingAction || compactNavigation || onToggleCompactMode) && (
+        <div className="mx-auto mb-2 flex max-w-[40rem] items-center justify-end gap-2">
+          {(compactLeadingAction || compactNavigation) && (
+            <div className="pointer-events-auto flex min-w-0 flex-1 items-center gap-1.5 rounded-xl border border-border/50 bg-card px-2 py-1 shadow-sm">
+              {compactLeadingAction}
+              {compactNavigation && (
+                <div className="min-w-0 flex-1">
+                  {compactNavigation}
+                </div>
+              )}
+            </div>
+          )}
+          {onToggleCompactMode && (
+            <PromptInputButton
+              onClick={onToggleCompactMode}
+              aria-label={t('composer.exitCompactMode')}
+              className="pointer-events-auto shrink-0 border border-border/50 bg-card shadow-sm"
+            >
+              <Maximize2 />
+            </PromptInputButton>
+          )}
         </div>
       )}
       {!hasPendingPermissions && (
@@ -450,7 +462,7 @@ export default function ChatComposer({
           how much context is left, so the token usage stays reachable below it. */}
       {hasQuestionPanel && (
         <div className="chat-content-width mx-auto flex justify-end">
-          <div className={compactMode ? 'pointer-events-auto rounded-lg bg-card/95 backdrop-blur-md' : undefined}>
+          <div className={compactMode ? 'pointer-events-auto rounded-lg bg-card' : undefined}>
             <TokenUsageSummary usage={tokenBudget} onClick={onShowTokenUsage} />
           </div>
         </div>

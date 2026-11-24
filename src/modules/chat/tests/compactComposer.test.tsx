@@ -193,10 +193,23 @@ test('简洁模式审批仍可操作且退出入口可见', () => {
   assert.equal(exit.mock.calls.length, 1);
 });
 
-test('问题面板替代输入时仍可退出简洁模式', () => {
+test('问题面板替代输入时仍可退出简洁模式并保留导航入口', () => {
   const exit = vi.fn();
+  const openDrawer = vi.fn();
+  const openFiles = vi.fn();
   render(view(props({
-    compactMode: true, onToggleCompactMode: exit,
+    compactMode: true,
+    onToggleCompactMode: exit,
+    compactLeadingAction: (
+      <button type="button" onClick={openDrawer} aria-label="Open menu">
+        Menu
+      </button>
+    ),
+    compactNavigation: (
+      <button type="button" onClick={openFiles}>
+        Files tab
+      </button>
+    ),
     pendingPermissionRequests: [{ requestId: 'question-1', toolName: 'AskUserQuestion', input: {
       questions: [{ question: '继续吗？', header: '选择', options: [
         { label: '继续', description: '继续操作' }, { label: '暂停', description: '暂停操作' },
@@ -204,6 +217,10 @@ test('问题面板替代输入时仍可退出简洁模式', () => {
     } }],
   })));
   assert.equal(screen.queryByPlaceholderText('Message'), null);
+  fireEvent.click(screen.getByRole('button', { name: 'Open menu' }));
+  assert.equal(openDrawer.mock.calls.length, 1);
+  fireEvent.click(screen.getByRole('button', { name: 'Files tab' }));
+  assert.equal(openFiles.mock.calls.length, 1);
   fireEvent.click(screen.getByRole('button', { name: 'Exit compact mode' }));
   assert.equal(exit.mock.calls.length, 1);
 });

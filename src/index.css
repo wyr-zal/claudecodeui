@@ -778,7 +778,7 @@
     max-width: 100%;
   }
 
-  /* 简洁模式作为贴底浮层，外层透出下方消息并放行鼠标事件，仅输入卡片及上方提示恢复交互与高不透明磨砂底色。 */
+  /* 简洁模式作为贴底浮层，外层透出下方消息并放行鼠标事件，仅输入卡片及上方提示恢复交互与纯色卡片底色。 */
   .chat-composer-shell[data-compact="true"] {
     pointer-events: none;
     padding: 0 8px max(12px, env(safe-area-inset-bottom));
@@ -806,9 +806,9 @@
     gap: 4px;
     padding: 6px;
     border-color: hsl(var(--border) / 0.85);
-    background-color: hsl(var(--card) / 0.94);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
+    background-color: hsl(var(--card));
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     box-shadow: 0 10px 30px -6px hsl(var(--foreground) / 0.14), 0 2px 8px hsl(var(--foreground) / 0.06);
   }
 
@@ -817,10 +817,10 @@
   }
 
   .chat-composer-shell[data-compact="true"] .composer-floating-card {
-    background-color: hsl(var(--card) / 0.95);
+    background-color: hsl(var(--card));
     background-image: linear-gradient(var(--floating-tint, transparent), var(--floating-tint, transparent));
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     box-shadow: 0 6px 20px -4px hsl(var(--foreground) / 0.12);
   }
 
@@ -840,15 +840,8 @@
     --floating-tint: hsl(var(--muted) / 0.45);
   }
 
-  .chat-composer-shell[data-compact="true"] [data-slot="alert"],
-  .chat-composer-shell[data-compact="true"] [data-testid="mcp-elicitation-panel"] > div,
-  .chat-composer-shell[data-compact="true"] .composer-floating-surface [class*="rounded-2xl"] {
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-  }
-
   .dark .chat-composer-shell[data-compact="true"] .composer-floating-surface .dark\:bg-gray-800\/90 {
-    background-color: rgb(31 41 55 / 0.96);
+    background-color: rgb(31 41 55);
   }
 
   .chat-composer-shell[data-compact="true"] [data-slot="prompt-input-header"],
