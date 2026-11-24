@@ -5,7 +5,10 @@ import path from 'node:path';
 import { projectsDb, sessionsDb } from '@/modules/database/index.js';
 import { broadcastSessionUpserted, chatRunRegistry } from '@/modules/websocket/index.js';
 import { providerRegistry } from '@/modules/providers/provider.registry.js';
-import { listBusyClaudeCliSessions } from '@/modules/providers/services/claude-cli-liveness.service.js';
+import {
+  listBusyClaudeCliSessions,
+  stopLiveClaudeCliSession,
+} from '@/modules/providers/services/claude-cli-liveness.service.js';
 import { providerCapabilitiesService } from '@/modules/providers/services/provider-capabilities.service.js';
 import { sessionHistoryCache } from '@/modules/providers/services/session-history-cache.service.js';
 import type {
@@ -30,9 +33,9 @@ import { AppError, createNormalizedMessage, sliceTailPage } from '@/shared/utils
  * rides along on both kinds whenever the session has any.
  *
  * A turn driven outside CloudCLI — the Claude CLI in the Shell view, or a
- * terminal the user opened themselves — is listed the same way, with
- * `canInterrupt: false` because there is no run here to abort, and a
- * `statusText` saying where the work is happening.
+ * terminal the user opened themselves — is listed with a `statusText` saying
+ * where the work is happening. It stays interruptible (`canInterrupt: true`)
+ * because its stop is the CLI process CloudCLI can end.
  */
 type RunningSessionEntry = {
   sessionId: string;
@@ -40,7 +43,7 @@ type RunningSessionEntry = {
   startedAt: number;
   lastSeq: number;
   background?: true;
-  canInterrupt?: false;
+  canInterrupt?: boolean;
   statusText?: string;
   tasks?: BackgroundTaskSummary[];
 };
@@ -278,6 +281,31 @@ async function readCurrentContextHistory(
   };
 }
 
+/**
+ * How long a Claude CLI transcript has to sit untouched before its `busy`
+ * registry entry stops counting as a turn in flight.
+ *
+ * The CLI writes the registry file when a session turns busy, not when a turn
+ * ends, and it keeps the process alive between turns — so `status: busy` alone
+ * would report an idle session as running until the process exits.
+ */
+const CLI_TURN_QUIET_MS = 5 * 60 * 1000;
+
+async function isClaudeCliTurnOver(jsonlPath: string | null): Promise<boolean> {
+  if (!jsonlPath) {
+    // Nothing to compare against; a busy CLI process is the better answer.
+    return false;
+  }
+
+  try {
+    const { mtimeMs } = await fsp.stat(jsonlPath);
+    return Date.now() - mtimeMs > CLI_TURN_QUIET_MS;
+  } catch {
+    // A missing transcript says nothing about the turn.
+    return false;
+  }
+}
+
 export const sessionsService = {
   /**
    * Lists provider ids that can load session history and normalize live messages.
@@ -328,20 +356,41 @@ export const sessionsService = {
         continue;
       }
 
+      // The registry file stays `busy` between turns, so the transcript is what
+      // says whether this session is working right now.
+      if (await isClaudeCliTurnOver(session.jsonl_path)) {
+        continue;
+      }
+
       entries.push({
         sessionId: session.session_id,
         provider: session.provider as LLMProvider,
         startedAt: live.startedAt,
         lastSeq: chatRunRegistry.getRun(session.session_id)?.lastSeq ?? 0,
-        // There is no run here to abort: the turn belongs to a CLI process
-        // CloudCLI does not own, so it can be reported but not interrupted.
-        canInterrupt: false,
+        // No run to abort here: the turn belongs to the CLI process, and ending
+        // that process is what a stop does for this session.
+        canInterrupt: true,
         statusText: 'Running in the Claude CLI',
       });
       runningById.set(session.session_id, entries[entries.length - 1]);
     }
 
     return entries;
+  },
+
+  /**
+   * Stops a turn the Claude CLI is driving for a session CloudCLI only observes.
+   *
+   * There is no run to abort here, so the CLI process itself is ended; the
+   * session stays resumable from its transcript.
+   */
+  async stopObservedCliSession(sessionId: string): Promise<boolean> {
+    const providerSessionId = sessionsDb.getSessionById(sessionId)?.provider_session_id;
+    if (!providerSessionId) {
+      return false;
+    }
+
+    return stopLiveClaudeCliSession(providerSessionId);
   },
 
   /**

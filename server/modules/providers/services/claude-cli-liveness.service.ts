@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,10 +7,13 @@ import path from 'node:path';
  * One Claude CLI process that is currently producing a response.
  *
  * `providerSessionId` is Claude's own session id, which is what the registry
- * records; callers map it onto an app session themselves.
+ * records; callers map it onto an app session themselves. `pid` is the process
+ * holding that session, which is the only handle on a turn CloudCLI does not
+ * drive.
  */
 type LiveClaudeCliSession = {
   providerSessionId: string;
+  pid: number;
   startedAt: number;
 };
 
@@ -90,7 +94,7 @@ async function readLiveBusySession(filePath: string): Promise<LiveClaudeCliSessi
   }
 
   const startedAt = typeof record.startedAt === 'number' ? record.startedAt : Date.now();
-  return { providerSessionId, startedAt };
+  return { providerSessionId, pid, startedAt };
 }
 
 /**
@@ -118,4 +122,86 @@ export async function listBusyClaudeCliSessions(): Promise<LiveClaudeCliSession[
   );
 
   return sessions.filter((session): session is LiveClaudeCliSession => session !== null);
+}
+
+/**
+ * Ends the Claude CLI process driving one session.
+ *
+ * A turn the CLI drives belongs to that process, not to a CloudCLI run, so the
+ * process is the only lever a stop request has. The session itself survives:
+ * the next message resumes it from its transcript.
+ */
+export async function stopLiveClaudeCliSession(
+  providerSessionId: string,
+  kill: (pid: number) => Promise<boolean> = terminateProcessTree,
+): Promise<boolean> {
+  const live = (await listBusyClaudeCliSessions())
+    .find((session) => session.providerSessionId === providerSessionId);
+
+  // Ending this process would take the server down with it.
+  if (!live || live.pid === process.pid) {
+    return false;
+  }
+
+  // A registry file outlives its process and Windows reuses pids; the kernel
+  // cross-check above only exists on Linux, so the image name is what keeps a
+  // stale entry from ending an unrelated program here.
+  if (!(await isClaudeProcess(live.pid))) {
+    return false;
+  }
+
+  return kill(live.pid);
+}
+
+/** Whether `pid` is still the Claude CLI, rather than a process that reused its pid. */
+async function isClaudeProcess(pid: number): Promise<boolean> {
+  if (process.platform !== 'win32') {
+    return true;
+  }
+
+  return new Promise<boolean>((resolve) => {
+    const probe = spawn('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { windowsHide: true });
+    let output = '';
+    probe.stdout?.on('data', (chunk) => { output += String(chunk); });
+    probe.once('error', () => resolve(false));
+    probe.once('close', () => resolve(/claude/i.test(output)));
+  });
+}
+
+/**
+ * Ends a process and everything it spawned.
+ *
+ * The CLI's children (a running Bash, its MCP servers) outlive a bare SIGTERM
+ * on Windows, so the whole tree goes down together.
+ */
+async function terminateProcessTree(pid: number): Promise<boolean> {
+  if (process.platform === 'win32') {
+    return new Promise<boolean>((resolve) => {
+      const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
+      killer.once('error', () => resolve(false));
+      killer.once('close', (code) => resolve(code === 0));
+    });
+  }
+
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    return false;
+  }
+
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+  }
+
+  try {
+    process.kill(pid, 'SIGKILL');
+    return true;
+  } catch {
+    return false;
+  }
 }

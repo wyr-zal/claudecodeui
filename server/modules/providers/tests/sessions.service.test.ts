@@ -351,7 +351,9 @@ test('running sessions report a turn driven by the Claude CLI', { concurrency: f
             provider: 'claude',
             startedAt: 4_000,
             lastSeq: 0,
-            canInterrupt: false,
+            // The CLI process is what a stop ends, so the session stays
+            // interruptible even though no run of CloudCLI's is behind it.
+            canInterrupt: true,
             statusText: 'Running in the Claude CLI',
           }]);
         },

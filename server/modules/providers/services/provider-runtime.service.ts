@@ -100,6 +100,14 @@ export function createProviderRuntimeService(
       return Boolean(await dependencies.resolveProvider(providerName).runtime.abort(sessionId));
     },
 
+    /**
+     * Stops a turn no provider run owns — a Claude CLI process CloudCLI only
+     * observes, in the Shell view or a terminal opened outside the app.
+     */
+    async stopObservedCliRun(sessionId: string): Promise<boolean> {
+      return sessionsService.stopObservedCliSession(sessionId);
+    },
+
     async stopBackgroundTask(providerName: LLMProvider, sessionId: string, taskId: string): Promise<boolean> {
       // A runtime that never holds background work has no task to stop.
       const { runtime } = dependencies.resolveProvider(providerName);

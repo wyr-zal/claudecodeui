@@ -83,6 +83,8 @@ export type ProviderRuntimeGateway = SideQuestionRuntime & {
     writer: ProviderRuntimeWriter,
   ): Promise<unknown>;
   abort(provider: LLMProvider, sessionId: string): Promise<boolean>;
+  /** Stops a turn the provider drives outside any run CloudCLI started. */
+  stopObservedCliRun(sessionId: string): Promise<boolean>;
   stopBackgroundTask(provider: LLMProvider, sessionId: string, taskId: string): Promise<boolean>;
   /** Delivers a message into the session's running turn; false when no turn can take it. */
   steer(provider: LLMProvider, sessionId: string, command: string, options: AnyRecord): Promise<boolean>;
@@ -672,7 +674,19 @@ async function handleChatAbort(
 
   const run = chatRunRegistry.getRun(sessionId);
   if (!run || run.status !== 'running') {
-    sendProtocolError(ws, 'NO_ACTIVE_RUN', `Session "${sessionId}" has no active run.`, sessionId);
+    // A turn the CLI drives has no run here — it is listed from the CLI's own
+    // registry. Ending that process is the only stop such a session has; when
+    // there is nothing to end, the request was for a run that is already gone.
+    let stopped = false;
+    try {
+      stopped = await dependencies.runtime.stopObservedCliRun(sessionId);
+    } catch {
+      stopped = false;
+    }
+
+    if (!stopped) {
+      sendProtocolError(ws, 'NO_ACTIVE_RUN', `Session "${sessionId}" has no active run.`, sessionId);
+    }
     return;
   }
 
