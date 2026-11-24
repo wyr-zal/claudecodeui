@@ -181,6 +181,7 @@
       "ctrlEnter": "Ctrl+Enter to send • Shift+Enter for new line • Tab to change modes • / for slash commands",
       "enter": "Enter to send • Shift+Enter for new line • Tab to change modes • / for slash commands",
       "queue": "Enter to queue your next message",
+      "steer": "Enter to steer the running turn",
       "appendQueued": "Enter to add to the queued message"
     },
     "clickToChangeMode": "Click to change permission mode (or press Tab in input)",
@@ -205,6 +206,9 @@
     }
   },
   "composer": {
+    "compactMode": "Enter compact mode",
+    "exitCompactMode": "Exit compact mode",
+    "moreTools": "More chat tools",
     "reasoning": "Reasoning",
     "model": "Model",
     "effortDefault": "Default",

@@ -205,6 +205,28 @@ export function errorMessage(error: unknown): string {
  */
 export const WORKSPACES_ROOT = process.env.WORKSPACES_ROOT || os.homedir();
 
+// A Windows root needs a drive letter or a full UNC share, so that a bare
+// `\projects` cannot silently change what is allowed when the startup drive does.
+function isAbsoluteWorkspaceRoot(root: string): boolean {
+  if (!path.isAbsolute(root)) return false;
+  if (process.platform !== 'win32') return true;
+  const normalized = normalizeProjectPath(root);
+  return /^[a-zA-Z]:\\/.test(normalized) || /^\\\\[^\\]+\\[^\\]+(?:\\|$)/.test(normalized);
+}
+
+/**
+ * Every directory a project may live in: the main workspace root plus the
+ * extra roots from `WORKSPACES_EXTRA_ROOTS`. File Tree reuses the same list so
+ * it can offer read-only previews outside the project.
+ */
+export const WORKSPACE_ROOTS = [...new Set([
+  WORKSPACES_ROOT,
+  ...(process.env.WORKSPACES_EXTRA_ROOTS || '')
+    .split(path.delimiter)
+    .map((root) => root.trim())
+    .filter(isAbsoluteWorkspaceRoot),
+])];
+
 /**
  * System-critical paths that must never be used as workspace roots.
  *
@@ -817,6 +839,14 @@ async function resolveDeepestExistingAncestor(
       }
     }
 
+    // A link whose target is gone still exists as an entry of its own. Walking
+    // past it would hand the new folder whatever the link's target would have
+    // been, so the whole path is refused instead.
+    const entryExists = await lstat(cursor).then(() => true, () => false);
+    if (entryExists) {
+      throw new Error(`Workspace path crosses a link whose target does not exist: ${cursor}`);
+    }
+
     const parentPath = pathOps.dirname(cursor);
     if (parentPath === cursor) {
       return normalizeProjectPathForPlatform(targetPath, platform);
@@ -928,16 +958,32 @@ export async function validateWorkspacePath(
       };
     }
 
-    const rawWorkspaceRoot = normalizeProjectPathForPlatform(await realpath(WORKSPACES_ROOT), platform);
-    const resolvedWorkspaceRoot = mounts.length > 0
-      ? await canonicalizeDrvfsPathCase(rawWorkspaceRoot, mounts)
-      : rawWorkspaceRoot;
-    if (!isWithinPosixOrNativePrefix(resolvedPath, resolvedWorkspaceRoot, platform)) {
+    let matchedWorkspaceRoot: string | null = null;
+    for (const root of WORKSPACE_ROOTS) {
+      let resolved: string;
+      try {
+        const realRoot = normalizeProjectPathForPlatform(await realpath(root), platform);
+        resolved = mounts.length > 0
+          ? await canonicalizeDrvfsPathCase(realRoot, mounts)
+          : realRoot;
+      } catch {
+        // An extra root that is missing or unreachable must not take the other
+        // roots down with it, and it is never created on demand.
+        continue;
+      }
+      if (isWithinPosixOrNativePrefix(resolvedPath, resolved, platform)) {
+        matchedWorkspaceRoot = resolved;
+        break;
+      }
+    }
+
+    if (!matchedWorkspaceRoot) {
       return {
         valid: false,
-        error: `Workspace path must be within the allowed workspace root: ${WORKSPACES_ROOT}`,
+        error: `Workspace path must be within an allowed workspace root: ${WORKSPACE_ROOTS.join(', ')}`,
       };
     }
+    const resolvedWorkspaceRoot = matchedWorkspaceRoot;
 
     try {
       await access(absolutePath);

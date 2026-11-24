@@ -373,7 +373,10 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
         return readOnlyPath;
       }
 
-      const workspacePath = await resolvePathUnderRoots(candidateTarget, [dependencies.workspace.rootPath]);
+      const workspacePath = await resolvePathUnderRoots(
+        candidateTarget,
+        dependencies.workspace.rootPaths ?? [dependencies.workspace.rootPath],
+      );
       if (workspacePath) {
         return workspacePath;
       }
