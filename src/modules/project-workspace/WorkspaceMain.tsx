@@ -170,9 +170,9 @@ function WorkspaceMain({
               <ChatInterface
                 compactMode={compactChat && !editorExpanded}
                 onToggleCompactMode={toggleCompactChat}
+                compactLeadingAction={compactChat && isMobile ? <MobileMenuButton onMenuClick={onMenuClick} /> : undefined}
                 compactNavigation={compactChat ? (
                   <div className="flex w-full min-w-0 items-center gap-2 overflow-x-auto pb-1">
-                    {isMobile && <MobileMenuButton onMenuClick={onMenuClick} />}
                     <WorkspaceTabs
                       activeTab={activeTab}
                       setActiveTab={setActiveTab}

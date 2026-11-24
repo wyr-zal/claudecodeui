@@ -51,6 +51,7 @@ type ChatInterfaceProps = {
   onShowAllTasks?: (() => void) | null;
   compactMode?: boolean;
   onToggleCompactMode?: () => void;
+  compactLeadingAction?: ReactNode;
   compactNavigation?: ReactNode;
 };
 
@@ -77,6 +78,7 @@ function ChatInterface({
   onShowAllTasks,
   compactMode = false,
   onToggleCompactMode,
+  compactLeadingAction,
   compactNavigation,
 }: ChatInterfaceProps) {
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings();
@@ -632,6 +634,7 @@ function ChatInterface({
           <ChatComposer
           compactMode={isCompactFloating}
           onToggleCompactMode={onToggleCompactMode}
+          compactLeadingAction={compactLeadingAction}
           compactNavigation={compactNavigation}
           pendingPermissionRequests={pendingPermissionRequests}
           handlePermissionDecision={handlePermissionDecision}

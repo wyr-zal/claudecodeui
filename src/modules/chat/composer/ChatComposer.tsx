@@ -141,6 +141,7 @@ type ChatComposerProps = {
   /** 保持同一输入实例，仅切换呈现方式，草稿和附件不随布局丢失。 */
   compactMode?: boolean;
   onToggleCompactMode?: () => void;
+  compactLeadingAction?: ReactNode;
   compactNavigation?: ReactNode;
 };
 
@@ -226,6 +227,7 @@ export default function ChatComposer({
   sendByCtrlEnter,
   compactMode = false,
   onToggleCompactMode,
+  compactLeadingAction,
   compactNavigation,
 }: ChatComposerProps) {
   const { t } = useTranslation('chat');
@@ -327,6 +329,7 @@ export default function ChatComposer({
       tooltip={{ content: t('input.attachFiles') }}
       onClick={openAttachmentPicker}
       aria-label={t('input.attachFiles')}
+      className="shrink-0"
     >
       <PaperclipIcon />
     </PromptInputButton>
@@ -334,6 +337,18 @@ export default function ChatComposer({
 
   const tokenUsageSummary = (
     <TokenUsageSummary usage={tokenBudget} onClick={onShowTokenUsage} />
+  );
+
+  const modelMenu = (
+    <ComposerModelMenu
+      effort={effort}
+      effortOptions={availableEffortOptions}
+      onSelectEffort={onSelectEffort}
+      model={model}
+      modelOptions={availableModelOptions}
+      onSelectModel={onSelectModel}
+      modelsLoading={modelsLoading}
+    />
   );
 
   return (
@@ -608,15 +623,7 @@ export default function ChatComposer({
               onSchedule={onScheduleMessage}
             />
 
-            <ComposerModelMenu
-              effort={effort}
-              effortOptions={availableEffortOptions}
-              onSelectEffort={onSelectEffort}
-              model={model}
-              modelOptions={availableModelOptions}
-              onSelectModel={onSelectModel}
-              modelsLoading={modelsLoading}
-            />
+            {!compactMode && modelMenu}
 
             <ComposerPermissionMenu
               permissionMode={permissionMode}
@@ -629,13 +636,19 @@ export default function ChatComposer({
           </div>
 
           {compactMode && (
-            <div className="composer-compact-quick-actions flex min-h-10 shrink-0 items-center gap-1.5">
+            <div className="composer-compact-quick-actions flex min-h-10 min-w-0 max-w-full items-center gap-1 sm:gap-1.5">
+              {compactLeadingAction}
               {attachmentButton}
               {tokenUsageSummary}
             </div>
           )}
 
-          <div className="composer-send-actions ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
+          <div
+            className={`composer-send-actions ml-auto flex items-center gap-1 sm:gap-1.5 ${
+              compactMode ? 'min-w-0 max-w-full flex-[1_1_10.5rem] justify-end' : 'shrink-0 sm:gap-2'
+            }`}
+          >
+            {compactMode && modelMenu}
             {compactMode && (
               <PromptInputButton
                 onClick={() => setToolsOpen((open) => !open)}

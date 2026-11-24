@@ -105,33 +105,69 @@ test('模式切换保留同一输入节点、草稿和附件', () => {
   assert.equal(screen.getByPlaceholderText('Message'), textarea);
 });
 
-test('简洁模式左下角常驻附件与 Token，其余工具按需展开，Escape 仅关闭工具', () => {
+test('简洁模式左下角常驻导航、附件与 Token，右下角常驻模型选择，其余工具按需展开，Escape 仅关闭工具', () => {
   const abort = vi.fn();
-  const value = props({ compactMode: true, isLoading: true, onAbortSession: abort });
-  const { container } = render(view(value));
+  const openDrawer = vi.fn();
+  const selectModel = vi.fn();
+  const value = props({
+    compactMode: true,
+    isLoading: true,
+    onAbortSession: abort,
+    availableModelOptions: [
+      { value: 'gemini-4', label: 'Gemini 4' },
+      { value: 'claude-sonnet', label: 'Claude Sonnet' },
+    ],
+    model: 'gemini-4',
+    onSelectModel: selectModel,
+    compactLeadingAction: (
+      <button type="button" onClick={openDrawer} aria-label="Open menu">
+        Menu
+      </button>
+    ),
+  });
+  const { container, rerender } = render(view(value));
   renderHook(() => useEscapeToAbortSession({
     canAbortSession: true, onAbortSession: abort, composerRef: value.textareaRef,
   }));
   const textarea = screen.getByPlaceholderText('Message') as HTMLTextAreaElement;
   assert.equal(textarea.getAttribute('rows'), '1');
   const quickActions = container.querySelector('.composer-compact-quick-actions');
+  const sendActions = container.querySelector('.composer-send-actions');
   assert.ok(quickActions);
+  assert.ok(sendActions);
+  const menuButton = screen.getByRole('button', { name: 'Open menu' });
   const attachButton = screen.getByRole('button', { name: 'Attach files' });
   const tokenButton = screen.getByRole('button', { name: 'Show token usage' });
+  const modelButton = screen.getByRole('button', { name: 'Select model and reasoning effort' });
+  assert.ok(quickActions.contains(menuButton));
   assert.ok(quickActions.contains(attachButton));
   assert.ok(quickActions.contains(tokenButton));
+  assert.ok(sendActions.contains(modelButton));
+  fireEvent.click(menuButton);
+  assert.equal(openDrawer.mock.calls.length, 1);
+
+  fireEvent.click(modelButton);
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Gemini 4' }));
+  fireEvent.click(screen.getByRole('menuitemradio', { name: 'Claude Sonnet' }));
+  assert.deepEqual(selectModel.mock.calls, [['claude-sonnet']]);
 
   const more = screen.getByRole('button', { name: 'More chat tools' });
   assert.equal(more.getAttribute('aria-expanded'), 'false');
   assert.equal(screen.queryByRole('button', { name: /^Default Mode:/ }), null);
   fireEvent.click(more);
   assert.equal(more.getAttribute('aria-expanded'), 'true');
+  assert.equal(screen.getAllByRole('button', { name: 'Open menu' }).length, 1);
   assert.equal(screen.getAllByRole('button', { name: 'Attach files' }).length, 1);
   assert.equal(screen.getAllByRole('button', { name: 'Show token usage' }).length, 1);
+  assert.equal(screen.getAllByRole('button', { name: 'Select model and reasoning effort' }).length, 1);
   assert.ok(screen.getByRole('button', { name: /^Default Mode:/ }));
   fireEvent.keyDown(more, { key: 'Escape' });
   assert.equal(more.getAttribute('aria-expanded'), 'false');
   assert.equal(abort.mock.calls.length, 0);
+
+  rerender(view({ ...value, compactMode: false }));
+  const secondaryActions = container.querySelector('.composer-secondary-actions');
+  assert.ok(secondaryActions?.contains(screen.getByRole('button', { name: 'Select model and reasoning effort' })));
 });
 
 test('简洁模式的停止按钮仍立即调用原停止处理器', () => {

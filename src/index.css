@@ -878,6 +878,15 @@
     order: 2;
   }
 
+  .chat-composer-shell[data-compact="true"] .composer-send-actions > button[aria-haspopup="menu"] {
+    flex-shrink: 1;
+    min-width: 0;
+  }
+
+  .chat-composer-shell[data-compact="true"] .composer-send-actions > :not([aria-haspopup="menu"]) {
+    flex-shrink: 0;
+  }
+
   .chat-composer-shell[data-compact="true"] .chat-input-placeholder {
     padding: 6px 8px;
     min-height: 36px;
