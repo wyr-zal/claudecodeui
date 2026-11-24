@@ -342,7 +342,7 @@ export async function resolvePathUnderRoots(targetPath: string, roots: string[])
       continue;
     }
 
-    if (resolvedPath === resolvedRoot || resolvedPath.startsWith(`${resolvedRoot}${path.sep}`)) {
+    if (isWithinPosixOrNativePrefix(resolvedPath, resolvedRoot)) {
       return resolvedPath;
     }
   }
@@ -720,34 +720,82 @@ function mapPosixPathToMountedWindowsPaths(posixPath: string, mounts: WslDriveMo
   return mappedPaths;
 }
 
+type ForbiddenWorkspaceRule = {
+  label: string;
+  candidatePaths: string[];
+  allowedSubpaths: string[];
+};
+
+async function expandPolicyPathVariants(
+  policyPath: string,
+  platform: NodeJS.Platform,
+): Promise<string[]> {
+  const normalizedPolicyPath = normalizeProjectPathForPlatform(policyPath, platform);
+  if (!normalizedPolicyPath) {
+    return [];
+  }
+
+  // Only resolve host symlinks when checking the running host's own platform.
+  if (platform !== process.platform) {
+    return [normalizedPolicyPath];
+  }
+
+  try {
+    const canonicalPolicyPath = normalizeProjectPathForPlatform(await realpath(normalizedPolicyPath), platform);
+    return canonicalPolicyPath && canonicalPolicyPath !== normalizedPolicyPath
+      ? [normalizedPolicyPath, canonicalPolicyPath]
+      : [normalizedPolicyPath];
+  } catch {
+    return [normalizedPolicyPath];
+  }
+}
+
+async function resolveForbiddenWorkspaceRules(platform: NodeJS.Platform): Promise<ForbiddenWorkspaceRule[]> {
+  const activeNativePolicyPaths = FORBIDDEN_WORKSPACE_PATHS.filter((forbiddenPath) => {
+    if (forbiddenPath === '/') return false;
+    if (platform === 'win32') return !forbiddenPath.startsWith('/');
+    return !/^[a-zA-Z]:\\/.test(forbiddenPath);
+  });
+
+  const varAllowedSubpaths = platform !== 'win32' && activeNativePolicyPaths.includes('/var')
+    ? [...new Set((await Promise.all(
+      ['/var/tmp', '/var/folders'].map((subpath) => expandPolicyPathVariants(subpath, platform)),
+    )).flat())]
+    : [];
+
+  return Promise.all(activeNativePolicyPaths.map(async (forbiddenPath) => {
+    const normalizedPath = normalizeProjectPathForPlatform(forbiddenPath, platform);
+    const candidatePaths = await expandPolicyPathVariants(forbiddenPath, platform);
+    return {
+      label: forbiddenPath,
+      candidatePaths,
+      allowedSubpaths: normalizedPath === '/var' ? varAllowedSubpaths : [],
+    };
+  }));
+}
+
 function workspaceSystemDirectoryError(
   targetPath: string,
-  options: { platform?: NodeJS.Platform; mounts?: WslDriveMount[]; originalWindowsPath?: string } = {},
+  options: {
+    platform?: NodeJS.Platform;
+    mounts?: WslDriveMount[];
+    originalWindowsPath?: string;
+    forbiddenRules?: ForbiddenWorkspaceRule[];
+  } = {},
 ): string | undefined {
   const platform = options.platform ?? process.platform;
   if (targetPath === '/') {
     return 'Cannot use system-critical directories as workspace locations';
   }
 
-  const mountedWindowsTargets =
-    platform !== 'win32' && options.mounts && options.mounts.length > 0
-      ? mapPosixPathToMountedWindowsPaths(targetPath, options.mounts)
-      : [];
+  if (platform !== 'win32') {
+    const mountedWindowsTargets =
+      options.mounts && options.mounts.length > 0
+        ? mapPosixPathToMountedWindowsPaths(targetPath, options.mounts)
+        : [];
 
-  for (const forbiddenPath of FORBIDDEN_WORKSPACE_PATHS) {
-    if (forbiddenPath === '/') continue;
-    const isUnixForbidden = forbiddenPath.startsWith('/');
-    const isWinForbidden = /^[a-zA-Z]:\\/.test(forbiddenPath);
-
-    if (platform === 'win32') {
-      // Do not map Unix system paths onto the active Windows drive letter.
-      if (isUnixForbidden) continue;
-      const normalizedForbiddenPath = normalizeProjectPathForPlatform(forbiddenPath, platform);
-      if (!isWithinPosixOrNativePrefix(targetPath, normalizedForbiddenPath, platform)) continue;
-      return `Cannot create workspace in system directory: ${forbiddenPath}`;
-    }
-
-    if (isWinForbidden) {
+    for (const forbiddenPath of FORBIDDEN_WORKSPACE_PATHS) {
+      if (!/^[a-zA-Z]:\\/.test(forbiddenPath)) continue;
       if (options.originalWindowsPath && isWithinWindowsRoot(options.originalWindowsPath, forbiddenPath)) {
         return `Cannot create workspace in system directory: ${forbiddenPath}`;
       }
@@ -760,18 +808,33 @@ function workspaceSystemDirectoryError(
           return `Cannot create workspace in system directory: ${forbiddenPath}`;
         }
       }
-      continue;
     }
+  }
 
-    const normalizedForbiddenPath = normalizeProjectPathForPlatform(forbiddenPath, platform);
-    if (!isWithinPosixOrNativePrefix(targetPath, normalizedForbiddenPath, platform)) continue;
-    if (
-      normalizedForbiddenPath === '/var'
-      && (isWithinPosixOrNativePrefix(targetPath, '/var/tmp', platform) || isWithinPosixOrNativePrefix(targetPath, '/var/folders', platform))
-    ) {
+  const nativeRules: ForbiddenWorkspaceRule[] = options.forbiddenRules ?? FORBIDDEN_WORKSPACE_PATHS
+    .filter((forbiddenPath) => {
+      if (forbiddenPath === '/') return false;
+      return platform === 'win32'
+        ? !forbiddenPath.startsWith('/')
+        : !/^[a-zA-Z]:\\/.test(forbiddenPath);
+    })
+    .map((forbiddenPath) => {
+      const normalizedPath = normalizeProjectPathForPlatform(forbiddenPath, platform);
+      return {
+        label: forbiddenPath,
+        candidatePaths: normalizedPath ? [normalizedPath] : [],
+        allowedSubpaths: normalizedPath === '/var' ? ['/var/tmp', '/var/folders'] : [],
+      };
+    });
+
+  for (const rule of nativeRules) {
+    if (!rule.candidatePaths.some((candidate) => isWithinPosixOrNativePrefix(targetPath, candidate, platform))) {
       continue;
     }
-    return `Cannot create workspace in system directory: ${forbiddenPath}`;
+    if (rule.allowedSubpaths.some((allowedPath) => isWithinPosixOrNativePrefix(targetPath, allowedPath, platform))) {
+      continue;
+    }
+    return `Cannot create workspace in system directory: ${rule.label}`;
   }
 
   return undefined;
@@ -928,6 +991,7 @@ export async function validateWorkspacePath(
         ? stripWindowsLongPathPrefix(requestedPath.trim())
         : undefined;
 
+    const forbiddenRules = await resolveForbiddenWorkspaceRules(platform);
     const pathOps = platform === 'win32' ? path.win32 : path.posix;
     const absolutePath = pathOps.resolve(hostResolution.path);
     const normalizedPath = normalizeProjectPathForPlatform(absolutePath, platform);
@@ -936,6 +1000,7 @@ export async function validateWorkspacePath(
       platform,
       mounts,
       originalWindowsPath,
+      forbiddenRules,
     });
     if (inputError) {
       return {
@@ -950,6 +1015,7 @@ export async function validateWorkspacePath(
       platform,
       mounts,
       originalWindowsPath,
+      forbiddenRules,
     });
     if (resolvedError) {
       return {
