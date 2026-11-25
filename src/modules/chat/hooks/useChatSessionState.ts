@@ -1187,8 +1187,52 @@ export function useChatSessionState({
     requestAnimationFrame(() => attempt(10));
   }, [chatMessages]);
 
+  const isSessionHistoryLoadError = selectedSession
+    ? sessionStore.getSessionSlot(selectedSession.id)?.status === 'error'
+    : false;
+
+  const retrySessionHistory = useCallback(async () => {
+    const sessionId = selectedSession?.id;
+    if (
+      !sessionId
+      || !selectedProject?.projectId
+      || !isActiveRef.current
+      || activeSessionIdRef.current !== sessionId
+    ) {
+      return;
+    }
+
+    setIsLoadingSessionMessages(true);
+    try {
+      const slot = await sessionStore.fetchFromServer(sessionId, {
+        limit: SESSION_MESSAGES_PAGE_SIZE,
+        offset: 0,
+        canRequest: () => (
+          isActiveRef.current
+          && activeSessionIdRef.current === sessionId
+        ),
+      });
+      if (!slot || activeSessionIdRef.current !== sessionId) return;
+
+      setHasMoreMessages(slot.hasMore);
+      setTotalMessages(slot.total);
+      messagesOffsetRef.current = slot.offset;
+      if (slot.tokenUsage !== undefined) {
+        setTokenBudget((slot.tokenUsage as Record<string, unknown> | null) ?? null);
+      }
+    } catch (error) {
+      console.error(`[ChatSession] retry failed for ${sessionId}:`, error);
+    } finally {
+      if (activeSessionIdRef.current === sessionId) {
+        setIsLoadingSessionMessages(false);
+      }
+    }
+  }, [selectedProject?.projectId, selectedSession?.id, sessionStore]);
+
   return {
     chatMessages,
+    isSessionHistoryLoadError,
+    retrySessionHistory,
     addMessage,
     sessionActivity,
     isProcessing,

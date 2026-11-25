@@ -214,7 +214,9 @@
     },
     "loading": {
       "olderMessages": "Memuat pesan lama...",
-      "sessionMessages": "Memuat pesan sesi..."
+      "sessionMessages": "Memuat pesan sesi...",
+      "failed": "Pesan percakapan ini tidak dapat dimuat.",
+      "retry": "Coba lagi"
     },
     "messages": {
       "showingOf": "Menampilkan {{shown}} dari {{total}} pesan",

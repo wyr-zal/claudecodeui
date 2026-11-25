@@ -250,7 +250,9 @@
     },
     "loading": {
       "olderMessages": "Eski mesajlar yükleniyor...",
-      "sessionMessages": "Oturum mesajları yükleniyor..."
+      "sessionMessages": "Oturum mesajları yükleniyor...",
+      "failed": "Bu konuşmanın mesajları yüklenemedi.",
+      "retry": "Yeniden dene"
     },
     "messages": {
       "showingOf": "{{total}} mesajdan {{shown}} tanesi gösteriliyor",

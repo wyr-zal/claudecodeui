@@ -204,7 +204,9 @@
     },
     "loading": {
       "olderMessages": "טוען הודעות ישנות…",
-      "sessionMessages": "טוען את הודעות הסשן…"
+      "sessionMessages": "טוען את הודעות הסשן…",
+      "failed": "לא ניתן לטעון את הודעות השיחה.",
+      "retry": "ניסיון חוזר"
     },
     "messages": {
       "showingOf": "מוצגות {{shown}} מתוך {{total}} הודעות",

@@ -181,7 +181,9 @@
     },
     "loading": {
       "olderMessages": "이전 메시지 로딩 중...",
-      "sessionMessages": "세션 메시지 로딩 중..."
+      "sessionMessages": "세션 메시지 로딩 중...",
+      "failed": "이 대화의 메시지를 불러오지 못했습니다.",
+      "retry": "다시 시도"
     },
     "messages": {
       "showingOf": "{{total}}개 중 {{shown}}개 표시",

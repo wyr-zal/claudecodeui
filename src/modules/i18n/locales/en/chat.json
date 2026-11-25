@@ -258,7 +258,9 @@
     },
     "loading": {
       "olderMessages": "Loading older messages...",
-      "sessionMessages": "Loading session messages..."
+      "sessionMessages": "Loading session messages...",
+      "failed": "Could not load this conversation. Please try again.",
+      "retry": "Retry"
     },
     "messages": {
       "showingOf": "Showing {{shown}} of {{total}} messages",

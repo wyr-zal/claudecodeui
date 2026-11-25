@@ -171,7 +171,9 @@
     },
     "loading": {
       "olderMessages": "Caricamento messaggi precedenti...",
-      "sessionMessages": "Caricamento messaggi della sessione..."
+      "sessionMessages": "Caricamento messaggi della sessione...",
+      "failed": "Impossibile caricare i messaggi di questa conversazione.",
+      "retry": "Riprova"
     },
     "messages": {
       "showingOf": "Visualizzati {{shown}} di {{total}} messaggi",

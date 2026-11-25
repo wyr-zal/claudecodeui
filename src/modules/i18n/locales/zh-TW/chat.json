@@ -201,7 +201,9 @@
     },
     "loading": {
       "olderMessages": "正在載入較早的訊息...",
-      "sessionMessages": "正在載入工作階段訊息..."
+      "sessionMessages": "正在載入工作階段訊息...",
+      "failed": "無法載入此對話的訊息，請重試。",
+      "retry": "重試"
     },
     "messages": {
       "showingOf": "顯示 {{shown}} / {{total}} 則訊息",

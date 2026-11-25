@@ -178,7 +178,9 @@
     },
     "loading": {
       "olderMessages": "Ältere Nachrichten werden geladen...",
-      "sessionMessages": "Sitzungsnachrichten werden geladen..."
+      "sessionMessages": "Sitzungsnachrichten werden geladen...",
+      "failed": "Die Nachrichten dieser Unterhaltung konnten nicht geladen werden.",
+      "retry": "Erneut versuchen"
     },
     "messages": {
       "showingOf": "{{shown}} von {{total}} Nachrichten werden angezeigt",

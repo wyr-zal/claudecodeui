@@ -32,6 +32,8 @@ type ChatMessagesPaneProps = {
   onWheel: () => void;
   onTouchMove: () => void;
   isLoadingSessionMessages: boolean;
+  isSessionHistoryLoadError?: boolean;
+  onRetrySessionHistory?: () => void;
   /** True while the viewed session has an active provider run in flight. */
   isProcessing?: boolean;
   /** True while ChatComposer's floating activity/stop tab is rendered above the input. */
@@ -107,6 +109,8 @@ function ChatMessagesPane({
   onWheel,
   onTouchMove,
   isLoadingSessionMessages,
+  isSessionHistoryLoadError = false,
+  onRetrySessionHistory,
   isProcessing = false,
   hasActivityIndicator = false,
   isCompactFloating = false,
@@ -200,6 +204,12 @@ function ChatMessagesPane({
     : hasActivityIndicator
       ? 'pb-12 sm:pb-14'
       : 'pb-3 sm:pb-4';
+  const historyNoticeState = isLoadingSessionMessages
+    && (isSessionHistoryLoadError || chatMessages.length > 0)
+    ? 'loading'
+    : isSessionHistoryLoadError
+      ? 'error'
+      : null;
 
   return (
     <div
@@ -209,6 +219,29 @@ function ChatMessagesPane({
       style={isCompactFloating && floatingBottomInset > 0 ? { paddingBottom: `${floatingBottomInset}px` } : undefined}
       className={`chat-messages-pane relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden pt-3 sm:pt-4 ${bottomPaddingClass}`}
     >
+      {historyNoticeState && (
+        <div
+          role={historyNoticeState === 'error' ? 'alert' : 'status'}
+          className={`mx-auto flex w-full chat-content-width items-center justify-center gap-3 px-4 text-center ${
+            chatMessages.length === 0 ? 'mt-8' : 'sticky top-3 z-20 mb-3'
+          }`}
+        >
+          <p className={`text-sm ${historyNoticeState === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}>
+            {historyNoticeState === 'error'
+              ? t('session.loading.failed')
+              : t('session.loading.sessionMessages')}
+          </p>
+          {historyNoticeState === 'error' && onRetrySessionHistory && (
+            <button
+              type="button"
+              onClick={onRetrySessionHistory}
+              className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {t('session.loading.retry')}
+            </button>
+          )}
+        </div>
+      )}
       {chatMessages.length > 0 && (
         <div className="pointer-events-none sticky right-4 top-3 z-10 mb-2 flex items-start justify-between gap-2 sm:px-4">
           {/* Running background work stays in view while the transcript scrolls under it. */}
@@ -235,14 +268,14 @@ function ChatMessagesPane({
         </div>
       )}
       <div className="mx-auto w-full chat-content-width space-y-3 px-4 sm:space-y-4">
-      {(isLoadingSessionMessages || isProcessing) && chatMessages.length === 0 ? (
+      {(isLoadingSessionMessages || isProcessing) && chatMessages.length === 0 && !isSessionHistoryLoadError ? (
         <div className="mt-8 text-center text-gray-500 dark:text-gray-400">
           <div className="flex items-center justify-center space-x-2">
             <div className="h-4 w-4 animate-spin rounded-full border-b-2 border-gray-400" />
             <p>{t('session.loading.sessionMessages')}</p>
           </div>
         </div>
-      ) : chatMessages.length === 0 ? (
+      ) : isSessionHistoryLoadError && chatMessages.length === 0 ? null : chatMessages.length === 0 ? (
         <ProviderSelectionEmptyState
           selectedSession={selectedSession}
           currentSessionId={currentSessionId}

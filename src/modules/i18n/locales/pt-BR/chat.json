@@ -226,7 +226,9 @@
     },
     "loading": {
       "olderMessages": "Carregando mensagens mais antigas...",
-      "sessionMessages": "Carregando mensagens da sessão..."
+      "sessionMessages": "Carregando mensagens da sessão...",
+      "failed": "Não foi possível carregar as mensagens desta conversa.",
+      "retry": "Tentar novamente"
     },
     "messages": {
       "showingOf": "Exibindo {{shown}} de {{total}} mensagens",

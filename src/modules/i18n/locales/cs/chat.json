@@ -240,7 +240,9 @@
     },
     "loading": {
       "olderMessages": "Načítání starších zpráv...",
-      "sessionMessages": "Načítání zpráv relace..."
+      "sessionMessages": "Načítání zpráv relace...",
+      "failed": "Zprávy této konverzace se nepodařilo načíst.",
+      "retry": "Zkusit znovu"
     },
     "messages": {
       "showingOf": "Zobrazené zprávy: {{shown}} z {{total}}",
