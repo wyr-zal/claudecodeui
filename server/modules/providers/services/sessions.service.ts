@@ -477,6 +477,14 @@ export const sessionsService = {
    * CLIs/SDKs only understand their own native id, which lives on the session
    * row. Ids without a row are assumed to be provider-native already (direct
    * API callers that reference sessions the watcher has not indexed yet).
+   *
+   * A row whose provider id merely repeats its own app id and that has no
+   * transcript has never actually run: legacy rows indexed from disk always
+   * carry a `jsonl_path`, and real provider ids differ from the app id. Such a
+   * row is treated as having no provider id so the next run starts fresh
+   * instead of resuming a conversation that was never written — which the CLI
+   * rejects with "No conversation found", leaving the session permanently
+   * empty.
    */
   resolveProviderSessionId(sessionId: string | null | undefined): string | null {
     if (!sessionId) {
@@ -484,7 +492,13 @@ export const sessionsService = {
     }
 
     const session = sessionsDb.getSessionById(sessionId);
-    return session ? session.provider_session_id : sessionId;
+    if (!session) {
+      return sessionId;
+    }
+    if (session.provider_session_id === session.session_id && !session.jsonl_path) {
+      return null;
+    }
+    return session.provider_session_id;
   },
 
   /**

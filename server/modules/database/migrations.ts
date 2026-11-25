@@ -395,10 +395,22 @@ const rebuildSessionsTableWithProjectSchema = (db: Database): void => {
  * Rows that existed before this migration were always keyed directly by the
  * provider-native session id, so backfilling `provider_session_id` with
  * `session_id` keeps every legacy row resolvable through the new mapping.
+ *
+ * The backfill runs only when the column is first created. `runMigrations`
+ * executes on every boot, and an unconditional `UPDATE ... WHERE
+ * provider_session_id IS NULL` would also catch app sessions created since the
+ * previous boot — rows that have never run and whose NULL is meaningful
+ * ("no provider id announced yet"). Stamping those with their own app id made
+ * the first send resume a conversation that never existed, and the session
+ * stayed empty for good.
  */
 const addProviderSessionIdMapping = (db: Database): void => {
   const sessionsTableInfo = getTableInfo(db, 'sessions');
   const columnNames = sessionsTableInfo.map((column) => column.name);
+
+  if (columnNames.includes('provider_session_id')) {
+    return;
+  }
 
   addColumnToTableIfNotExists(db, 'sessions', columnNames, 'provider_session_id', 'TEXT');
   db.exec(`

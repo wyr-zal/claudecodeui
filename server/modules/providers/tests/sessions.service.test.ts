@@ -96,6 +96,36 @@ test('provider session id is unavailable until the provider assigns one', { conc
   });
 });
 
+test('a self-mapped row with no transcript resolves to no provider id', { concurrency: false }, async () => {
+  // A boot migration used to stamp pending app sessions with their own app id.
+  // Resuming that id makes the CLI fail with "No conversation found", so the
+  // resolver has to treat the row as never-run instead.
+  await withIsolatedDatabase(() => {
+    sessionsDb.createAppSession('stamped-app-session', 'claude', '/tmp/session-id-copy-project');
+    sessionsDb.assignProviderSessionId('stamped-app-session', 'stamped-app-session');
+
+    assert.equal(sessionsService.resolveProviderSessionId('stamped-app-session'), null);
+  });
+});
+
+test('a self-mapped row that has a transcript keeps resolving to it', { concurrency: false }, async () => {
+  // Legacy rows indexed from disk are keyed by the provider id itself; their
+  // transcript proves the conversation exists and must stay resumable.
+  await withIsolatedDatabase(() => {
+    sessionsDb.createSession(
+      'indexed-session',
+      'claude',
+      '/tmp/session-id-copy-project',
+      'Indexed conversation',
+      '2026-08-01T08:00:00.000Z',
+      '2026-08-01T09:00:00.000Z',
+      '/tmp/transcripts/indexed-session.jsonl',
+    );
+
+    assert.equal(sessionsService.resolveProviderSessionId('indexed-session'), 'indexed-session');
+  });
+});
+
 test('provider session id reports a missing app session', { concurrency: false }, async () => {
   await withIsolatedDatabase(() => {
     assert.throws(
