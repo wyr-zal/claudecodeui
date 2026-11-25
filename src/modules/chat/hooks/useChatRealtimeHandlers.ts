@@ -307,12 +307,17 @@ export function useChatRealtimeHandlers({
       }
 
       // --- All other messages: route to store ---
+      // Control events describe UI state, not transcript rows. They carry no
+      // message id, and a stored one breaks transcript merging for the whole
+      // session — which left the composer unable to send a second message.
       const shouldPersist =
         msg.kind !== 'complete'
         && msg.kind !== 'status'
         && msg.kind !== 'permission_request'
         && msg.kind !== 'permission_resolved'
-        && msg.kind !== 'permission_cancelled';
+        && msg.kind !== 'permission_cancelled'
+        && msg.kind !== 'permission_attention'
+        && msg.kind !== 'permission_attention_cleared';
 
       if (sid && shouldPersist) {
         sessionStore.appendRealtime(sid, msg as unknown as NormalizedMessage);

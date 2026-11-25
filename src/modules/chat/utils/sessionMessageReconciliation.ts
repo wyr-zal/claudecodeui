@@ -103,7 +103,10 @@ export function removeOptimisticUserEchoes(
   const claimedServerIds = new Set<string>();
 
   return realtimeMessages.filter((message) => {
-    if (!message.id.startsWith('local_')) {
+    // A live frame without a string id is not a transcript row (control
+    // events such as a cleared permission hint). Comparing it would throw and
+    // take the whole merged transcript — and the composer — down with it.
+    if (typeof message.id !== 'string' || !message.id.startsWith('local_')) {
       return true;
     }
 
