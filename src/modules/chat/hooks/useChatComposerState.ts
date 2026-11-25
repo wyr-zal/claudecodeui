@@ -71,6 +71,17 @@ type UseChatComposerStateArgs = {
    * /session/:id and records it as the current session.
    */
   onSessionEstablished?: (sessionId: string, context: SessionEstablishedContext) => void;
+  /**
+   * The session id the route names, when there is one.
+   *
+   * A `/session/<id>` URL is the user saying which conversation this is. Until
+   * that id is resolved into `selectedSession`, the composer has no session to
+   * send to, and treating that gap as "brand-new chat" allocated a second
+   * session and sent the same message into it, leaving the conversation the
+   * user was looking at untouched (two sessions, one task). Sending is refused
+   * while the route names a session this view has not bound yet.
+   */
+  routeSessionId?: string | null;
   onFileOpen?: (filePath: string, diffInfo?: unknown) => void;
   onShowSettings?: () => void;
   /** Runs the `/clear` command: clears the open session's context. */
@@ -259,6 +270,7 @@ export function useChatComposerState({
   addMessage,
   setIsUserScrolledUp,
   setPendingPermissionRequests,
+  routeSessionId = null,
 }: UseChatComposerStateArgs) {
   const { t } = useTranslation('chat');
   // The composer text together with the chat scope it belongs to. They are one
@@ -1285,6 +1297,31 @@ export function useChatComposerState({
       // via the session gateway. There is no client-visible session-id
       // handoff later — this id stays valid for the conversation's lifetime.
       let targetSessionId = selectedSession?.id || currentSessionId || null;
+      // The route names a conversation this view has not bound yet (its details
+      // request is still out, or it failed). Sending here used to allocate a
+      // second session and send the message into that one, so the conversation
+      // on screen stayed untouched and the same task ended up split across two
+      // sessions. Refuse instead: the message stays in the composer.
+      if (!targetSessionId && routeSessionId) {
+        addMessage({
+          type: 'error',
+          content: t('input.routeSessionUnresolved'),
+          timestamp: new Date(),
+        });
+        return;
+      }
+      // The route names one conversation while this view still holds another:
+      // the message would be delivered into the conversation left on screen,
+      // not the one the URL points at. That is how a task ends up in the wrong
+      // chat. Refuse until the two agree.
+      if (routeSessionId && targetSessionId && targetSessionId !== routeSessionId) {
+        addMessage({
+          type: 'error',
+          content: t('input.routeSessionUnresolved'),
+          timestamp: new Date(),
+        });
+        return;
+      }
       if (!targetSessionId) {
         let createdSessionName = sessionSummary;
         try {
@@ -1456,6 +1493,7 @@ export function useChatComposerState({
       queueMessage,
       recordSentMessage,
       resetCommandMenuState,
+      routeSessionId,
       scrollToBottom,
       selectedProject,
       sendMessage,

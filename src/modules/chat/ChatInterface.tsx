@@ -36,6 +36,8 @@ type ChatInterfaceProps = {
   isActive: boolean;
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
+  /** The session id the route names, when it names one; see `routeSessionId` on the composer. */
+  routeSessionId?: string | null;
   ws: WebSocket | null;
   sendMessage: (message: unknown) => void;
   onFileOpen?: (filePath: string, diffInfo?: any) => void;
@@ -64,6 +66,7 @@ function ChatInterface({
   isActive,
   selectedProject,
   selectedSession,
+  routeSessionId = null,
   ws,
   sendMessage,
   onFileOpen,
@@ -361,6 +364,7 @@ function ChatInterface({
     setPendingPermissionRequests,
     resolvePermissionModeForProvider,
     supportsSideQuestions,
+    routeSessionId,
   });
 
   // On WebSocket reconnect, request a bounded persisted-tail sync (deferred
