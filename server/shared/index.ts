@@ -13,5 +13,7 @@ export type { BackgroundTaskSummary, ClearedContextSegment, FetchHistoryOptions,
 export { sliceTailPage } from './utils.js';
 
 // Session persistence uses canonical path normalization and fork/history metadata.
-export { normalizeProjectPath } from './utils.js';
+// `resolveWorkspacePathForHost` maps a caller-supplied Windows path onto this
+// host's mount before any runnable session uses it as a working directory.
+export { normalizeProjectPath, resolveWorkspacePathForHost } from './utils.js';
 export type { SessionForkAncestor } from './types.js';

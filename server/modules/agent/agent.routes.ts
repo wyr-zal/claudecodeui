@@ -5,7 +5,7 @@ import express from 'express';
 
 import type { ProviderRunFunction } from '@/shared/types.js';
 
-import { normalizeProjectPath } from '../../shared/utils.js';
+import { normalizeProjectPath, resolveWorkspacePathForHost } from '../../shared/utils.js';
 
 /** The providers an Agent API run can start: the ones with a runtime and a model catalog. */
 const AGENT_RUN_PROVIDERS = ['claude', 'cursor', 'codex', 'opencode'];
@@ -964,8 +964,15 @@ export function createAgentRouter(dependencies: AgentRouterDependencies): expres
         finalProjectPath = clonedProject.path;
         clonedProjectCreated = clonedProject.created;
       } else {
-        // Use existing project path
-        finalProjectPath = normalizeProjectPath(path.resolve(projectPath));
+        // Use existing project path. An API caller may name the folder in
+        // Windows form while the host is WSL, so the text is mapped to this
+        // host's mount first: `path.resolve` on a Windows path would otherwise
+        // put it under the server's working directory.
+        const hostResolution = resolveWorkspacePathForHost(projectPath);
+        if (hostResolution.error) {
+          throw new Error(hostResolution.error);
+        }
+        finalProjectPath = normalizeProjectPath(path.resolve(hostResolution.path));
 
         // Verify the path exists
         try {

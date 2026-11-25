@@ -29,7 +29,7 @@ import type {
   SideQuestionEvent,
   SideQuestionRuntime,
 } from '@/shared/types.js';
-import { parseIncomingJsonObject, SIDE_QUESTION_ID_PATTERN } from '@/shared/utils.js';
+import { parseIncomingJsonObject, resolveWorkspacePathForHost, SIDE_QUESTION_ID_PATTERN } from '@/shared/utils.js';
 
 /**
  * Trust boundary for client-supplied image attachments: chat.send options come
@@ -351,6 +351,22 @@ async function dispatchRun(
   // app session id.
   const storedPermissionSettings = resolvePermissionSettings(provider, userId, clientOptions, dependencies);
 
+  // A row written before the host-path mapping existed can still hold a
+  // Windows path on a WSL host. Map it here too, so continuing such a session
+  // runs where the folder actually is instead of failing to start.
+  const sessionHostPath = session.project_path
+    ? resolveWorkspacePathForHost(session.project_path)
+    : null;
+  if (sessionHostPath?.error) {
+    // Released here, not thrown: the run is already reserved and a throw would
+    // leave the session processing forever.
+    chatRunRegistry.completeRunIfCurrent(run, { exitCode: 1 });
+    if (ws) {
+      sendProtocolError(ws, 'INVALID_PROJECT_PATH', sessionHostPath.error, sessionId);
+    }
+    return { started: false, error: sessionHostPath.error };
+  }
+
   const runtimeOptions: AnyRecord = {
     ...clientOptions,
     ...(storedPermissionSettings ? { toolsSettings: storedPermissionSettings } : {}),
@@ -361,8 +377,8 @@ async function dispatchRun(
     images: uniqueAttachments.filter(isImageAttachmentDescriptor),
     files: uniqueAttachments.filter((descriptor) => !isImageAttachmentDescriptor(descriptor)),
     sessionId,
-    cwd: clientOptions.cwd ?? session.project_path ?? undefined,
-    projectPath: session.project_path ?? clientOptions.projectPath,
+    cwd: clientOptions.cwd ?? sessionHostPath?.path ?? session.project_path ?? undefined,
+    projectPath: sessionHostPath?.path ?? session.project_path ?? clientOptions.projectPath,
   };
 
   let failure: string | null = null;

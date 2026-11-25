@@ -10,6 +10,7 @@ import { sessionsService } from '@/modules/providers/services/sessions.service.j
 import { chatRunRegistry } from '@/modules/websocket/index.js';
 import type { IProvider } from '@/shared/interfaces.js';
 import type { BackgroundTaskSummary } from '@/shared/types.js';
+import { resolveWorkspacePathForHost } from '@/shared/utils.js';
 
 async function withIsolatedDatabase(runTest: () => void | Promise<void>): Promise<void> {
   const previousDatabasePath = process.env.DATABASE_PATH;
@@ -54,6 +55,21 @@ test('app session names use at most four whole words from the initial message', 
       sessionsDb.getSessionById(result.sessionId)?.custom_name,
       'supercalifragilisticexpialidocious second third fourth',
     );
+  });
+});
+
+test('an app session stores the host-native form of a caller-supplied workspace path', { concurrency: false }, async () => {
+  // A WSL host receiving `F:\work` must not keep that text: the row's
+  // `project_path` becomes the working directory every run starts in, and a
+  // Windows path there makes the CLI start inside the install directory.
+  await withIsolatedDatabase(() => {
+    const requestedPath = 'F:\\ProjectsWork\\demo-app';
+    const result = sessionsService.createAppSession('claude', requestedPath, 'windows path session');
+
+    const expectedPath = resolveWorkspacePathForHost(requestedPath);
+    assert.equal(expectedPath.error, undefined);
+    assert.equal(result.projectPath, expectedPath.path);
+    assert.equal(sessionsDb.getSessionById(result.sessionId)?.project_path, expectedPath.path);
   });
 });
 

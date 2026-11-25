@@ -20,7 +20,7 @@ import type {
   NormalizedMessage,
   WorkflowAgentActivity,
 } from '@/shared/index.js';
-import { AppError, createNormalizedMessage, sliceTailPage } from '@/shared/index.js';
+import { AppError, createNormalizedMessage, resolveWorkspacePathForHost, sliceTailPage } from '@/shared/index.js';
 
 /**
  * One session the running-sessions poll reports as busy.
@@ -514,10 +514,22 @@ export const sessionsService = {
     projectPath: string,
     initialMessage: string,
   ): CreateAppSessionResult {
-    const normalizedProjectPath = projectPath.trim();
+    // A caller may name the folder in Windows form (`F:\work`) while this host
+    // is WSL. The row's `project_path` becomes the run's working directory, so
+    // it has to be the host-native path; storing the Windows text unchanged
+    // makes the CLI start inside the install directory instead.
+    const hostResolution = resolveWorkspacePathForHost(projectPath);
+    const normalizedProjectPath = hostResolution.path.trim();
     if (!normalizedProjectPath) {
       throw new AppError('projectPath is required.', {
         code: 'PROJECT_PATH_REQUIRED',
+        statusCode: 400,
+      });
+    }
+
+    if (hostResolution.error) {
+      throw new AppError(hostResolution.error, {
+        code: 'INVALID_PROJECT_PATH',
         statusCode: 400,
       });
     }

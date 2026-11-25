@@ -6,7 +6,7 @@ import pty, { type IPty } from 'node-pty';
 import { WebSocket, type RawData } from 'ws';
 
 import { resolveCodexCommandLine } from '@/modules/providers/index.js';
-import { parseIncomingJsonObject, stripAnsiSequences } from '@/shared/utils.js';
+import { parseIncomingJsonObject, resolveWorkspacePathForHost, stripAnsiSequences } from '@/shared/utils.js';
 
 type ShellIncomingMessage = {
   type?: string;
@@ -558,7 +558,17 @@ export function handleShellConnection(
       }
 
       if (data.type === 'init') {
-        const projectPath = readString(data.projectPath, process.cwd());
+        // The shell's working directory is whatever the caller names, and a
+        // Windows client may name it in Windows form. Map it onto this host
+        // before the pty starts: `path.resolve` on `F:\work` from a WSL host
+        // would otherwise resolve inside the server's own working directory.
+        const requestedProjectPath = readString(data.projectPath, process.cwd());
+        const hostResolution = resolveWorkspacePathForHost(requestedProjectPath);
+        if (hostResolution.error) {
+          ws.send(JSON.stringify({ type: 'error', message: hostResolution.error }));
+          return;
+        }
+        const projectPath = hostResolution.path || requestedProjectPath;
         const sessionId = readString(data.sessionId) || null;
         const hasSession = readBoolean(data.hasSession);
         const provider = readString(data.provider, 'claude');
