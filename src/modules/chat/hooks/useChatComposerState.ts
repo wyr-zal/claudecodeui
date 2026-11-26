@@ -352,15 +352,17 @@ export function useChatComposerState({
   const isComposingRef = useRef(false);
   const lastCompositionEndAtRef = useRef(0);
   /**
-   * When this composer last handed a message to the session — `chat.send`,
+   * The session this composer last handed a message to, and when — `chat.send`,
    * `chat.edit-send` or `chat.steer`.
    *
    * The stop button takes the send button's place the moment a turn starts, so
    * a second tap of the same finger lands on it: the turn is stopped before it
    * has produced anything and the transcript keeps a message that never ran.
-   * Stops arriving inside the grace window are dropped as mistaps.
+   * Stops inside the grace window are dropped as mistaps — but only for the
+   * session that was just sent to. An upload can finish after the user has
+   * moved on, and a stop in the chat now on screen is a real stop.
    */
-  const lastSendAtRef = useRef(0);
+  const lastSendRef = useRef<{ sessionId: string | null; at: number }>({ sessionId: null, at: 0 });
 
   useEffect(() => {
     const onStart = () => {
@@ -1052,7 +1054,7 @@ export function useChatComposerState({
         content: message.content,
         options: { attachments: message.uploadedAttachments },
       });
-      lastSendAtRef.current = Date.now();
+      lastSendRef.current = { sessionId: steerSessionKey, at: Date.now() };
       recordSentMessage(message.content, steerSessionKey);
       // Attachments are not kept per chat: the steered ones leave even when another chat is open now.
       setAttachedFiles((files) => files.filter((file) => !message.attachments.includes(file)));
@@ -1465,7 +1467,7 @@ export function useChatComposerState({
           attachments: uploadedAttachments,
         },
       });
-      lastSendAtRef.current = Date.now();
+      lastSendRef.current = { sessionId: targetSessionId, at: Date.now() };
       // Only this send's edit: an edit begun in another chat during the upload stays.
       setEditingAnchorId((current) => (current === editingAnchorId ? null : current));
 
@@ -1859,13 +1861,19 @@ export function useChatComposerState({
       return;
     }
 
-    // See `lastSendAtRef`: this is the same tap that sent the message, landing
-    // on the button that replaced the send button.
-    if (Date.now() - lastSendAtRef.current < ABORT_GRACE_AFTER_SEND_MS) {
+    const targetSessionId = selectedSession?.id || currentSessionId || null;
+
+    // See `lastSendRef`: this is the same tap that sent the message, landing on
+    // the button that replaced the send button. Only the session that was just
+    // sent to is protected — a stop in another chat is a real stop.
+    const lastSend = lastSendRef.current;
+    if (
+      lastSend.sessionId === targetSessionId
+      && Date.now() - lastSend.at < ABORT_GRACE_AFTER_SEND_MS
+    ) {
       return;
     }
 
-    const targetSessionId = selectedSession?.id || currentSessionId || null;
     if (!targetSessionId) {
       console.warn('Abort requested but no session ID is available.');
       return;

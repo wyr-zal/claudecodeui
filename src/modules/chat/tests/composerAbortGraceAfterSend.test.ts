@@ -25,15 +25,17 @@ type SentFrame = { type: string; sessionId?: string; content?: string };
 
 let sent: SentFrame[] = [];
 let now = 1_000_000;
+let boundSession = SESSION;
 
 const renderComposer = () => {
   sent = [];
+  boundSession = SESSION;
   return renderHook(() =>
     useChatComposerState({
       selectedProject: PROJECT,
-      selectedSession: SESSION,
-      currentSessionId: SESSION.id,
-      routeSessionId: SESSION.id,
+      selectedSession: boundSession,
+      currentSessionId: boundSession.id,
+      routeSessionId: boundSession.id,
       provider: 'claude',
       permissionMode: 'default' as PermissionMode,
       cyclePermissionMode: () => undefined,
@@ -63,6 +65,11 @@ const sendMessage = async (view: ReturnType<typeof renderComposer>, text: string
 
 const abort = async (view: ReturnType<typeof renderComposer>) => {
   await act(async () => { view.result.current.handleAbortSession(); });
+};
+
+const openSession = async (view: ReturnType<typeof renderComposer>, session: ProjectSession) => {
+  boundSession = session;
+  await act(async () => { view.rerender(); });
 };
 
 beforeEach(() => {
@@ -114,4 +121,22 @@ test('a stop in a conversation nothing was just sent from is untouched', async (
   await abort(view);
 
   assert.equal(sent.filter((frame) => frame.type === 'chat.abort').length, 1);
+});
+
+test('a send into another chat does not swallow the stop of the chat on screen', async () => {
+  const other: ProjectSession = { id: 'session-2' } as ProjectSession;
+  const view = renderComposer();
+
+  // The upload that finishes after the user has already moved on still records
+  // its own destination; the window must not follow the user to the new chat.
+  await sendMessage(view, 'hello');
+  await openSession(view, other);
+
+  now += 400;
+  await abort(view);
+
+  assert.deepEqual(
+    sent.filter((frame) => frame.type === 'chat.abort').map((frame) => frame.sessionId),
+    [other.id],
+  );
 });
