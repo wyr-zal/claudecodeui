@@ -228,6 +228,15 @@ const getNotificationSessionSummary = (
 const SAFARI_IME_RACE_WINDOW_MS = 30;
 
 /**
+ * How long after sending a stop click is treated as a mistap rather than intent.
+ *
+ * The composer swaps the send button for the stop button as soon as a turn
+ * starts, in the same place under the same finger. Without this window the
+ * second half of a double tap stops the turn before it has done anything.
+ */
+const ABORT_GRACE_AFTER_SEND_MS = 1000;
+
+/**
  * A phone or tablet types through an on-screen keyboard: its return key is
  * labelled "new line", and Shift+Enter — the desktop combination for a newline
  * in Enter-to-send mode — cannot be typed on it at all. `(pointer: coarse)`
@@ -342,6 +351,16 @@ export function useChatComposerState({
   // composition that starts in one field and ends after focus moves still closes cleanly.
   const isComposingRef = useRef(false);
   const lastCompositionEndAtRef = useRef(0);
+  /**
+   * When this composer last handed a message to the session — `chat.send`,
+   * `chat.edit-send` or `chat.steer`.
+   *
+   * The stop button takes the send button's place the moment a turn starts, so
+   * a second tap of the same finger lands on it: the turn is stopped before it
+   * has produced anything and the transcript keeps a message that never ran.
+   * Stops arriving inside the grace window are dropped as mistaps.
+   */
+  const lastSendAtRef = useRef(0);
 
   useEffect(() => {
     const onStart = () => {
@@ -1033,6 +1052,7 @@ export function useChatComposerState({
         content: message.content,
         options: { attachments: message.uploadedAttachments },
       });
+      lastSendAtRef.current = Date.now();
       recordSentMessage(message.content, steerSessionKey);
       // Attachments are not kept per chat: the steered ones leave even when another chat is open now.
       setAttachedFiles((files) => files.filter((file) => !message.attachments.includes(file)));
@@ -1445,6 +1465,7 @@ export function useChatComposerState({
           attachments: uploadedAttachments,
         },
       });
+      lastSendAtRef.current = Date.now();
       // Only this send's edit: an edit begun in another chat during the upload stays.
       setEditingAnchorId((current) => (current === editingAnchorId ? null : current));
 
@@ -1835,6 +1856,12 @@ export function useChatComposerState({
 
   const handleAbortSession = useCallback(() => {
     if (!canAbortSession) {
+      return;
+    }
+
+    // See `lastSendAtRef`: this is the same tap that sent the message, landing
+    // on the button that replaced the send button.
+    if (Date.now() - lastSendAtRef.current < ABORT_GRACE_AFTER_SEND_MS) {
       return;
     }
 
