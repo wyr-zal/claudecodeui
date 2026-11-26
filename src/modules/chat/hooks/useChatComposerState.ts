@@ -1200,6 +1200,33 @@ export function useChatComposerState({
         }
       }
 
+      // The route names a conversation this view has not bound yet, or names one
+      // while the view still holds another. Either way the send below would land
+      // in the wrong chat — including the queue and steer paths taken while a
+      // turn is running. Refuse before those branches, not after them.
+      const boundSessionId = selectedSession?.id || currentSessionId || null;
+      if (routeSessionId && boundSessionId !== routeSessionId) {
+        if (!boundSessionId) {
+          // The scope is about to become the routed session, and that swap
+          // replaces the composer with that session's saved draft. Park the
+          // refused text there so the refusal does not eat what was typed.
+          const parked = readDraftText(routeSessionId);
+          if (!parked.trim()) {
+            writeDraftText(routeSessionId, currentInput);
+          } else if (!parked.includes(currentInput)) {
+            writeDraftText(routeSessionId, `${parked}
+
+${currentInput}`);
+          }
+        }
+        addMessage({
+          type: 'error',
+          content: t('input.routeSessionUnresolved'),
+          timestamp: new Date(),
+        });
+        return;
+      }
+
       // A turn is already in flight: stash this message instead of sending it.
       // Upload attached files now so the queued record contains durable image
       // descriptors that can be sent even if another session is open later.
@@ -1318,32 +1345,7 @@ export function useChatComposerState({
       // BEFORE the first websocket send: brand-new chats allocate one here
       // via the session gateway. There is no client-visible session-id
       // handoff later — this id stays valid for the conversation's lifetime.
-      let targetSessionId = selectedSession?.id || currentSessionId || null;
-      // The route names a conversation this view has not bound yet (its details
-      // request is still out, or it failed). Sending here used to allocate a
-      // second session and send the message into that one, so the conversation
-      // on screen stayed untouched and the same task ended up split across two
-      // sessions. Refuse instead: the message stays in the composer.
-      if (!targetSessionId && routeSessionId) {
-        addMessage({
-          type: 'error',
-          content: t('input.routeSessionUnresolved'),
-          timestamp: new Date(),
-        });
-        return;
-      }
-      // The route names one conversation while this view still holds another:
-      // the message would be delivered into the conversation left on screen,
-      // not the one the URL points at. That is how a task ends up in the wrong
-      // chat. Refuse until the two agree.
-      if (routeSessionId && targetSessionId && targetSessionId !== routeSessionId) {
-        addMessage({
-          type: 'error',
-          content: t('input.routeSessionUnresolved'),
-          timestamp: new Date(),
-        });
-        return;
-      }
+      let targetSessionId = boundSessionId;
       if (!targetSessionId) {
         let createdSessionName = sessionSummary;
         try {

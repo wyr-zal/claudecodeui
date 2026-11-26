@@ -36,13 +36,14 @@ const createRequests = (fetchMock: ReturnType<typeof vi.fn>) => fetchMock.mock.c
 type RenderArgs = {
   session: ProjectSession | null;
   routeSessionId?: string | null;
+  isLoading?: boolean;
 };
 
 const renderComposer = (initial: RenderArgs) => {
   const sent: Array<{ type: string; sessionId?: string; content?: string }> = [];
   const established: string[] = [];
   const messages: Array<{ type: string; content: unknown }> = [];
-  const view = renderHook(({ session, routeSessionId }: RenderArgs) =>
+  const view = renderHook(({ session, routeSessionId, isLoading }: RenderArgs) =>
     useChatComposerState({
       selectedProject: PROJECT,
       selectedSession: session,
@@ -54,7 +55,7 @@ const renderComposer = (initial: RenderArgs) => {
       resolvePermissionModeForProvider: () => 'default' as PermissionMode,
       currentProviderModel: 'test-model',
       currentProviderEffort: 'medium',
-      isLoading: false,
+      isLoading: isLoading ?? false,
       canAbortSession: false,
       tokenBudget: null,
       sendMessage: (message) => { sent.push(message as { type: string }); },
@@ -69,6 +70,7 @@ const renderComposer = (initial: RenderArgs) => {
     view,
     established,
     messages,
+    sent,
     chatSends: () => sent.filter((message) => message.type === 'chat.send'),
   };
 };
@@ -136,6 +138,28 @@ test('sending is refused while the view still holds a different session than the
   assert.ok(messages.some((message) => message.type === 'error'));
 });
 
+test('a running turn does not take a message meant for the routed conversation', async () => {
+  // The view still holds the previous conversation while the route names the
+  // next one. With a turn running, a send would be steered into (or queued for)
+  // the previous conversation before any route check ran — the wrong-chat
+  // outcome again, just through the queue/steer path.
+  const { view, messages, sent } = renderComposer({
+    session: { id: 'previous-session' } as ProjectSession,
+    routeSessionId: ROUTE_SESSION,
+    isLoading: true,
+  });
+  await act(async () => { view.result.current.setInput('hello'); });
+
+  await act(async () => {
+    void view.result.current.handleSubmit({ preventDefault: () => undefined } as never);
+  });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+  assert.deepEqual(sent, [], 'nothing is steered or queued into the previous conversation');
+  assert.equal(view.result.current.input, 'hello');
+  assert.ok(messages.some((message) => message.type === 'error'));
+});
+
 test('a chat whose route names the bound session still sends normally', async () => {
   const { view, chatSends } = renderComposer({
     session: { id: ROUTE_SESSION } as ProjectSession,
@@ -185,9 +209,12 @@ test('once the route session resolves, sending goes to that session', async () =
   assert.equal(chatSends().length, 0);
 
   // The details request lands: the route id is now bound to a session. The
-  // composer follows the scope change, so the draft is typed again there.
-  view.rerender({ session: { id: ROUTE_SESSION } as ProjectSession, routeSessionId: ROUTE_SESSION });
-  await act(async () => { view.result.current.setInput('hello'); });
+  // composer swaps to that session's scope, and the refused text must be there
+  // already — retyping it here would hide a refusal that ate the user's draft.
+  await act(async () => {
+    view.rerender({ session: { id: ROUTE_SESSION } as ProjectSession, routeSessionId: ROUTE_SESSION });
+  });
+  assert.equal(view.result.current.input, 'hello', 'the refused draft follows the session it was meant for');
   await act(async () => {
     void view.result.current.handleSubmit({ preventDefault: () => undefined } as never);
   });
