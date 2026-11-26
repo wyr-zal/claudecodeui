@@ -20,7 +20,13 @@ import type {
   NormalizedMessage,
   WorkflowAgentActivity,
 } from '@/shared/index.js';
-import { AppError, createNormalizedMessage, resolveWorkspacePathForHost, sliceTailPage } from '@/shared/index.js';
+import {
+  AppError,
+  createNormalizedMessage,
+  resolveWorkspacePathForHost,
+  sliceTailPage,
+  truncateSessionTitle,
+} from '@/shared/index.js';
 
 /**
  * One session the running-sessions poll reports as busy.
@@ -103,11 +109,12 @@ type SessionDetails = {
   } | null;
 };
 
-const MAX_CLOUDCLI_SESSION_NAME_WORDS = 4;
-
 function buildCloudCliSessionName(initialMessage: string): string {
-  const words = initialMessage.trim().split(/\s+/).filter(Boolean);
-  return words.slice(0, MAX_CLOUDCLI_SESSION_NAME_WORDS).join(' ') || 'Untitled Session';
+  // Word counting is meaningless for Chinese, where a whole sentence is one
+  // word: the name became the entire first message and filled the sidebar
+  // row. Cut by rendered width instead so every language gets the same
+  // readable length.
+  return truncateSessionTitle(initialMessage) || 'Untitled Session';
 }
 
 /**
