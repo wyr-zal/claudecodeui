@@ -952,11 +952,25 @@ export function useProjectsState({
       return;
     }
 
+    // The lookup outlives a click: if the user opens another chat or asks for a
+    // new one while it is in flight, that choice wins and this attempt must no
+    // longer redirect, nor forget the record the newer chat wrote.
+    let cancelled = false;
+
     void (async () => {
       try {
         const response = await api.sessionDetails(lastSession.sessionId);
+        if (cancelled) {
+          return;
+        }
         if (!response.ok) {
-          forgetLastOpenedSession();
+          // Only a definitive "no such session" clears the record. A 5xx or a
+          // gateway hiccup says nothing about the session, and forgetting it
+          // here would silently disable recovery until the user opens something
+          // else. The network-error branch below already keeps the record.
+          if (response.status === 404) {
+            forgetLastOpenedSession();
+          }
           return;
         }
       } catch (error) {
@@ -966,6 +980,10 @@ export function useProjectsState({
 
       navigate(`/session/${lastSession.sessionId}`, { replace: true });
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [isLoadingProjects, isNewSessionRoute, navigate, sessionId]);
 
   useEffect(() => {

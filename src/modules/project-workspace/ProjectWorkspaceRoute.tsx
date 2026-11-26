@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useMatch, useNavigate, useParams } from 'react-router-dom';
 
 import { NEW_SESSION_ROUTE } from '@/shared/constants';
 
@@ -29,9 +29,11 @@ export default function ProjectWorkspaceRoute() {
 
 function ProjectWorkspaceRouteContent() {
   const navigate = useNavigate();
-  const { pathname } = useLocation();
   const { sessionId } = useParams<{ sessionId?: string }>();
-  const isNewSessionRoute = pathname === NEW_SESSION_ROUTE;
+  // Matched through the router rather than compared as a string: a trailing
+  // slash (`/new/`) is the same route to React Router, and it must start a new
+  // chat instead of reopening the remembered one.
+  const isNewSessionRoute = Boolean(useMatch(NEW_SESSION_ROUTE));
   const { isMobile } = useDeviceSettings({ trackPWA: false });
   const { ws, sendMessage, subscribe } = useWebSocket();
   const { isSessionProcessing } = useSessionProtectionActions();

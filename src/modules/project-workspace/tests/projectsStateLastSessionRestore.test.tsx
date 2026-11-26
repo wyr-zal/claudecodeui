@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, test, vi } from 'vitest';
 
 import type { Project } from '@/shared/types';
@@ -47,22 +47,33 @@ const renderProjectsState = async (args: {
 }) => {
   const { useProjectsState } = await import('@/modules/project-workspace/hooks/useProjectsState');
   const navigate = vi.fn();
+  let currentArgs = args;
 
-  const view = renderHook(() =>
-    useProjectsState({
-      sessionId: args.sessionId,
-      isNewSessionRoute: args.isNewSessionRoute,
-      navigate,
-      subscribe: (listener: ServerEventListener) => {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
-      isMobile: false,
-      isSessionProcessing: () => false,
-    }),
+  // The route arguments are hook props, so a rerender really is "the router
+  // moved": the hook has to see the new value for its effects to re-run.
+  const view = renderHook(
+    (props: { sessionId?: string; isNewSessionRoute?: boolean }) =>
+      useProjectsState({
+        sessionId: props.sessionId,
+        isNewSessionRoute: props.isNewSessionRoute,
+        navigate,
+        subscribe: (listener: ServerEventListener) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        isMobile: false,
+        isSessionProcessing: () => false,
+      }),
+    { initialProps: args },
   );
 
-  return { view, navigate };
+  /** Re-render as the router would after the user opens another route. */
+  const reopen = (next: { sessionId?: string; isNewSessionRoute?: boolean }) => {
+    currentArgs = { ...currentArgs, ...next };
+    view.rerender(currentArgs);
+  };
+
+  return { view, navigate, reopen };
 };
 
 beforeEach(() => {
@@ -139,7 +150,7 @@ test('a recorded conversation the backend no longer has is forgotten instead of 
     LAST_OPENED_SESSION_STORAGE_KEY,
     JSON.stringify({ sessionId: 'session-1', projectId: 'project-1', updatedAt: Date.now() }),
   );
-  sessionDetailsResponse.mockResolvedValue({ ok: false });
+  sessionDetailsResponse.mockResolvedValue({ ok: false, status: 404 });
 
   const { view, navigate } = await renderProjectsState({});
 
@@ -152,4 +163,69 @@ test('a recorded conversation the backend no longer has is forgotten instead of 
   });
 
   assert.equal(navigate.mock.calls.length, 0);
+});
+
+test('a temporary lookup failure keeps the record for the next load', async () => {
+  localStorage.setItem(
+    LAST_OPENED_SESSION_STORAGE_KEY,
+    JSON.stringify({ sessionId: 'session-1', projectId: 'project-1', updatedAt: Date.now() }),
+  );
+  sessionDetailsResponse.mockResolvedValue({ ok: false, status: 503 });
+
+  const { view, navigate } = await renderProjectsState({});
+
+  await waitFor(() => {
+    assert.equal(sessionDetailsResponse.mock.calls.length, 1);
+  });
+  await act(async () => { await Promise.resolve(); });
+
+  assert.notEqual(localStorage.getItem(LAST_OPENED_SESSION_STORAGE_KEY), null);
+  assert.equal(navigate.mock.calls.length, 0);
+  assert.equal(view.result.current.isLoadingProjects, false);
+});
+
+test('opening another chat while the lookup is in flight wins over the restore', async () => {
+  localStorage.setItem(
+    LAST_OPENED_SESSION_STORAGE_KEY,
+    JSON.stringify({ sessionId: 'session-1', projectId: 'project-1', updatedAt: Date.now() }),
+  );
+  let resolveDetails: (response: unknown) => void = () => undefined;
+  const pendingLookup = new Promise((resolve) => { resolveDetails = resolve; });
+  // Only the remembered session hangs; the chat the user opens must resolve
+  // normally, otherwise its own alias check would navigate and muddy the result.
+  sessionDetailsResponse.mockImplementation(async (requestedSessionId: string) => {
+    if (requestedSessionId === 'session-1') {
+      return pendingLookup;
+    }
+    return { ok: true, json: async () => ({ data: { sessionId: requestedSessionId, project: { projectId: 'project-1' } } }) };
+  });
+
+  const { view, navigate, reopen } = await renderProjectsState({});
+  await waitFor(() => {
+    assert.equal(sessionDetailsResponse.mock.calls.length, 1);
+  });
+
+  // The user picks a conversation before the remembered one comes back.
+  await act(async () => { reopen({ sessionId: 'session-2' }); });
+  await act(async () => {
+    resolveDetails({
+      ok: true,
+      json: async () => ({ data: { sessionId: 'session-1', project: { projectId: 'project-1' } } }),
+    });
+  });
+  // The continuation sits behind a few awaits; drain them so the assertion below
+  // sees whatever the lookup decided to do.
+  await act(async () => {
+    for (let tick = 0; tick < 10; tick += 1) {
+      await Promise.resolve();
+    }
+  });
+
+  assert.equal(
+    navigate.mock.calls.some((call) => call[0] === '/session/session-1'),
+    false,
+    `a late lookup must not drag the user back: ${JSON.stringify(navigate.mock.calls)}`,
+  );
+  assert.notEqual(localStorage.getItem(LAST_OPENED_SESSION_STORAGE_KEY), null);
+  assert.equal(view.result.current.isLoadingProjects, false);
 });
