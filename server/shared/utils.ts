@@ -827,11 +827,39 @@ function workspaceSystemDirectoryError(
       };
     });
 
+  // macOS links `/etc` and `/var` to `/private/...`, and the caller resolves
+  // the target through those links before asking. Comparing the resolved
+  // target against an unresolved policy entry would miss it — or, with
+  // `/private` as an extra root, accept a system directory outright. Resolve
+  // both sides the same way, on the running host only.
+  const withHostCanonical = (value: string): string[] => {
+    const variants = [value];
+    if (platform === process.platform) {
+      try {
+        const canonical = normalizeProjectPathForPlatform(fs.realpathSync(value), platform);
+        if (canonical && canonical !== value) {
+          variants.push(canonical);
+        }
+      } catch {
+        // A path that does not exist has no link to follow.
+      }
+    }
+    return variants;
+  };
+  const targetVariants = withHostCanonical(targetPath);
+
   for (const rule of nativeRules) {
-    if (!rule.candidatePaths.some((candidate) => isWithinPosixOrNativePrefix(targetPath, candidate, platform))) {
+    const candidateVariants = [...new Set(rule.candidatePaths.flatMap(withHostCanonical))];
+    const allowedVariants = [...new Set(rule.allowedSubpaths.flatMap(withHostCanonical))];
+    const withinCandidate = candidateVariants.some((candidate) => (
+      targetVariants.some((target) => isWithinPosixOrNativePrefix(target, candidate, platform))
+    ));
+    if (!withinCandidate) {
       continue;
     }
-    if (rule.allowedSubpaths.some((allowedPath) => isWithinPosixOrNativePrefix(targetPath, allowedPath, platform))) {
+    if (allowedVariants.some((allowedPath) => (
+      targetVariants.some((target) => isWithinPosixOrNativePrefix(target, allowedPath, platform))
+    ))) {
       continue;
     }
     return `Cannot create workspace in system directory: ${rule.label}`;
