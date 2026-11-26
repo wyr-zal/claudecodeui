@@ -1,5 +1,7 @@
 import { memo } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
+
+import { NEW_SESSION_ROUTE } from '@/shared/constants';
 
 import { PaletteOpsProvider } from '@/modules/command-palette';
 import { ProjectsStateProvider } from '@/modules/project-workspace/context/ProjectsStateContext';
@@ -27,7 +29,9 @@ export default function ProjectWorkspaceRoute() {
 
 function ProjectWorkspaceRouteContent() {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const { sessionId } = useParams<{ sessionId?: string }>();
+  const isNewSessionRoute = pathname === NEW_SESSION_ROUTE;
   const { isMobile } = useDeviceSettings({ trackPWA: false });
   const { ws, sendMessage, subscribe } = useWebSocket();
   const { isSessionProcessing } = useSessionProtectionActions();
@@ -41,6 +45,7 @@ function ProjectWorkspaceRouteContent() {
       subscribe={subscribe}
       isMobile={isMobile}
       isSessionProcessing={isSessionProcessing}
+      isNewSessionRoute={isNewSessionRoute}
     >
       <ProjectWorkspaceShell
         isMobile={isMobile}
