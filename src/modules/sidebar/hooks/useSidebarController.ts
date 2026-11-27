@@ -19,6 +19,17 @@ import {
 
 const EXPANDED_PROJECTS_STORAGE_KEY = 'cloudcli-expanded-projects';
 
+/**
+ * How long a finished task waits before the sidebar re-reads its lists.
+ *
+ * One turn ending is the common case, but a queued message or a second tab can
+ * finish within the same moment; the window lets those share a single read
+ * instead of firing one request per completion. It also gives the server's
+ * transcript watcher (500 ms debounce) time to record the turn's last activity
+ * before the list is read, or the refresh would return the old order.
+ */
+const AUTO_REFRESH_DEBOUNCE_MS = 800;
+
 /** Read browser-local project expansion, tolerating missing or invalid storage. */
 function readExpandedProjects(): Set<string> | null {
   try {
@@ -1234,8 +1245,17 @@ export function useSidebarController({
   const refreshProjects = useCallback(async () => {
     setIsRefreshing(true);
     try {
+      // The project list request is also what makes the server re-read every
+      // provider transcript and advance each session's `lastActivity`. The
+      // lists below are ordered by that timestamp, so they are read only once
+      // it has landed — fetching them alongside it could return the old order.
+      try {
+        await Promise.resolve(onRefresh());
+      } catch (error) {
+        console.error('[Sidebar] Failed to refresh projects:', error);
+      }
+
       await Promise.all([
-        Promise.resolve(onRefresh()),
         fetchArchivedSessions(),
         searchMode === 'conversations'
           ? fetchRecentConversationsPage(0, false)
@@ -1245,6 +1265,91 @@ export function useSidebarController({
       setIsRefreshing(false);
     }
   }, [fetchArchivedSessions, fetchRecentConversationsPage, onRefresh, searchMode]);
+
+  /**
+   * Runs `refreshProjects` by itself whenever a task finishes, so a completed
+   * conversation moves above the ones still running without the user clicking
+   * the header's refresh button.
+   */
+  const refreshProjectsRef = useRef(refreshProjects);
+  useEffect(() => {
+    refreshProjectsRef.current = refreshProjects;
+  }, [refreshProjects]);
+
+  // A completion that lands while a refresh is already running cannot be part
+  // of that request's answer, so it queues one more instead of being dropped.
+  const autoRefreshInFlightRef = useRef(false);
+  const autoRefreshPendingRef = useRef(false);
+  const autoRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Named function expression so the in-flight branch below can re-enter
+  // itself without reading the `autoRefreshAfterCompletion` binding while it
+  // is still initializing.
+  const autoRefreshAfterCompletion = useCallback(function autoRefreshAfterCompletion() {
+    if (autoRefreshTimerRef.current) {
+      clearTimeout(autoRefreshTimerRef.current);
+    }
+
+    autoRefreshTimerRef.current = setTimeout(() => {
+      autoRefreshTimerRef.current = null;
+
+      if (autoRefreshInFlightRef.current) {
+        autoRefreshPendingRef.current = true;
+        return;
+      }
+
+      autoRefreshInFlightRef.current = true;
+      void refreshProjectsRef.current()
+        .catch((error) => {
+          console.error('[Sidebar] Auto refresh after a finished task failed:', error);
+        })
+        .finally(() => {
+          autoRefreshInFlightRef.current = false;
+          if (autoRefreshPendingRef.current) {
+            autoRefreshPendingRef.current = false;
+            autoRefreshAfterCompletion();
+          }
+        });
+    }, AUTO_REFRESH_DEBOUNCE_MS);
+  }, []);
+
+  useEffect(() => () => {
+    if (autoRefreshTimerRef.current) {
+      clearTimeout(autoRefreshTimerRef.current);
+      autoRefreshTimerRef.current = null;
+    }
+  }, []);
+
+  /**
+   * The sessions this client saw producing a response, i.e. busy with a turn
+   * rather than only with the background tasks a finished turn left behind.
+   * A session leaving this set has just ended its turn — the moment its
+   * `lastActivity` advances, whether the run was started here, in another tab,
+   * or by a scheduled message.
+   */
+  const processingSessionIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const sessionId of activeSessions) {
+      if (!backgroundSessionIds.has(sessionId)) {
+        ids.add(sessionId);
+      }
+    }
+    return ids;
+  }, [activeSessions, backgroundSessionIds]);
+
+  const previouslyProcessingSessionIdsRef = useRef<ReadonlySet<string>>(new Set());
+
+  useEffect(() => {
+    const previouslyProcessingSessionIds = previouslyProcessingSessionIdsRef.current;
+    previouslyProcessingSessionIdsRef.current = processingSessionIds;
+
+    const hasFinishedTurn = [...previouslyProcessingSessionIds]
+      .some((sessionId) => !processingSessionIds.has(sessionId));
+
+    if (hasFinishedTurn) {
+      autoRefreshAfterCompletion();
+    }
+  }, [autoRefreshAfterCompletion, processingSessionIds]);
 
   const updateSessionSummary = useCallback(
     // `_projectId` and `_provider` are preserved for compatibility with
