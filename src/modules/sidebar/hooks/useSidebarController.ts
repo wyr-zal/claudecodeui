@@ -25,10 +25,26 @@ const EXPANDED_PROJECTS_STORAGE_KEY = 'cloudcli-expanded-projects';
  * One turn ending is the common case, but a queued message or a second tab can
  * finish within the same moment; the window lets those share a single read
  * instead of firing one request per completion. It also gives the server's
- * transcript watcher (500 ms debounce) time to record the turn's last activity
- * before the list is read, or the refresh would return the old order.
+ * transcript watcher time to record the turn's last activity before the list
+ * is read, or the refresh would return the old order — that watcher debounces
+ * in `server/modules/providers/services/sessions-watcher.service.ts`, so this
+ * window has to stay larger than its 500 ms.
  */
 const AUTO_REFRESH_DEBOUNCE_MS = 800;
+
+/**
+ * Ceiling for that wait. Tasks finishing back to back keep restarting the
+ * window above, so without a cap a busy sidebar would keep postponing its
+ * read; past this point the read goes ahead anyway.
+ */
+const AUTO_REFRESH_MAX_WAIT_MS = 2_000;
+
+/**
+ * What a read covers. `all` also re-reads the archived lists, which is what
+ * the header button has always done; `visible` re-reads only what the open
+ * tab shows, so an automatic read does not scan archives nobody is looking at.
+ */
+type RefreshScope = 'all' | 'visible';
 
 /** Read browser-local project expansion, tolerating missing or invalid storage. */
 function readExpandedProjects(): Set<string> | null {
@@ -1242,8 +1258,92 @@ export function useSidebarController({
     }
   }, [fetchArchivedSessions, onRefresh, t]);
 
-  const refreshProjects = useCallback(async () => {
-    setIsRefreshing(true);
+  // Whether this controller is still mounted. A read that finishes after
+  // unmount must not schedule another one or touch state.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    // Reset on mount: a remount (StrictMode runs one) reuses this ref.
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // One read at a time, shared by the header button and the automatic path.
+  // A completion that lands while a read is out cannot be part of that read's
+  // answer, so it queues exactly one more instead of being dropped; the scope
+  // remembers whether that queued read was asked for by hand.
+  const autoRefreshInFlightRef = useRef(false);
+  const pendingRefreshScopeRef = useRef<RefreshScope | null>(null);
+  const autoRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // When the first completion of the current burst arrived, so a stream of
+  // completions cannot keep postponing the read past the ceiling below.
+  const autoRefreshBurstStartRef = useRef<number | null>(null);
+  const refreshProjectsRef = useRef<((scope?: RefreshScope) => Promise<void>) | null>(null);
+
+  /**
+   * Queues the automatic read behind the debounce window, collapsing a burst
+   * of completions into one read while still reading within
+   * `AUTO_REFRESH_MAX_WAIT_MS` of the burst's first completion.
+   */
+  const scheduleAutoRefresh = useCallback(() => {
+    if (!mountedRef.current) {
+      return;
+    }
+
+    const now = Date.now();
+    if (autoRefreshBurstStartRef.current === null) {
+      autoRefreshBurstStartRef.current = now;
+    }
+
+    if (autoRefreshTimerRef.current) {
+      clearTimeout(autoRefreshTimerRef.current);
+    }
+
+    const remainingBurst = AUTO_REFRESH_MAX_WAIT_MS - (now - autoRefreshBurstStartRef.current);
+    const delay = Math.max(0, Math.min(AUTO_REFRESH_DEBOUNCE_MS, remainingBurst));
+
+    autoRefreshTimerRef.current = setTimeout(() => {
+      autoRefreshTimerRef.current = null;
+      autoRefreshBurstStartRef.current = null;
+
+      if (!mountedRef.current) {
+        return;
+      }
+
+      void refreshProjectsRef.current?.('visible').catch((error) => {
+        console.error('[Sidebar] Auto refresh after a finished task failed:', error);
+      });
+    }, delay);
+  }, []);
+
+  useEffect(() => () => {
+    if (autoRefreshTimerRef.current) {
+      clearTimeout(autoRefreshTimerRef.current);
+      autoRefreshTimerRef.current = null;
+    }
+    autoRefreshBurstStartRef.current = null;
+  }, []);
+
+  const refreshProjects = useCallback(async (scope: RefreshScope = 'all') => {
+    // One read at a time: a click that lands while an automatic read is out
+    // (or the reverse) would otherwise run two overlapping full scans. A
+    // queued manual read keeps its wider scope.
+    if (autoRefreshInFlightRef.current) {
+      if (scope === 'all' || pendingRefreshScopeRef.current === null) {
+        pendingRefreshScopeRef.current = scope;
+      }
+      // A click still gets its spinner, which lasts until the queued read ends.
+      if (scope === 'all') {
+        setIsRefreshing(true);
+      }
+      return;
+    }
+
+    autoRefreshInFlightRef.current = true;
+    // The spinner is feedback for a click; an automatic read should not make
+    // the header button look pressed every time a task finishes.
+    setIsRefreshing(scope === 'all');
     try {
       // The project list request is also what makes the server re-read every
       // provider transcript and advance each session's `lastActivity`. The
@@ -1256,69 +1356,32 @@ export function useSidebarController({
       }
 
       await Promise.all([
-        fetchArchivedSessions(),
+        scope === 'all' ? fetchArchivedSessions() : Promise.resolve(),
         searchMode === 'conversations'
           ? fetchRecentConversationsPage(0, false)
           : Promise.resolve(),
       ]);
     } finally {
-      setIsRefreshing(false);
-    }
-  }, [fetchArchivedSessions, fetchRecentConversationsPage, onRefresh, searchMode]);
+      autoRefreshInFlightRef.current = false;
 
-  /**
-   * Runs `refreshProjects` by itself whenever a task finishes, so a completed
-   * conversation moves above the ones still running without the user clicking
-   * the header's refresh button.
-   */
-  const refreshProjectsRef = useRef(refreshProjects);
+      const pendingScope = pendingRefreshScopeRef.current;
+      pendingRefreshScopeRef.current = null;
+      // A queued click keeps the spinner on until its own read ends.
+      setIsRefreshing(pendingScope === 'all');
+
+      if (pendingScope && mountedRef.current) {
+        if (pendingScope === 'all') {
+          void refreshProjectsRef.current?.('all');
+        } else {
+          scheduleAutoRefresh();
+        }
+      }
+    }
+  }, [fetchArchivedSessions, fetchRecentConversationsPage, onRefresh, scheduleAutoRefresh, searchMode]);
+
   useEffect(() => {
     refreshProjectsRef.current = refreshProjects;
   }, [refreshProjects]);
-
-  // A completion that lands while a refresh is already running cannot be part
-  // of that request's answer, so it queues one more instead of being dropped.
-  const autoRefreshInFlightRef = useRef(false);
-  const autoRefreshPendingRef = useRef(false);
-  const autoRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Named function expression so the in-flight branch below can re-enter
-  // itself without reading the `autoRefreshAfterCompletion` binding while it
-  // is still initializing.
-  const autoRefreshAfterCompletion = useCallback(function autoRefreshAfterCompletion() {
-    if (autoRefreshTimerRef.current) {
-      clearTimeout(autoRefreshTimerRef.current);
-    }
-
-    autoRefreshTimerRef.current = setTimeout(() => {
-      autoRefreshTimerRef.current = null;
-
-      if (autoRefreshInFlightRef.current) {
-        autoRefreshPendingRef.current = true;
-        return;
-      }
-
-      autoRefreshInFlightRef.current = true;
-      void refreshProjectsRef.current()
-        .catch((error) => {
-          console.error('[Sidebar] Auto refresh after a finished task failed:', error);
-        })
-        .finally(() => {
-          autoRefreshInFlightRef.current = false;
-          if (autoRefreshPendingRef.current) {
-            autoRefreshPendingRef.current = false;
-            autoRefreshAfterCompletion();
-          }
-        });
-    }, AUTO_REFRESH_DEBOUNCE_MS);
-  }, []);
-
-  useEffect(() => () => {
-    if (autoRefreshTimerRef.current) {
-      clearTimeout(autoRefreshTimerRef.current);
-      autoRefreshTimerRef.current = null;
-    }
-  }, []);
 
   /**
    * The sessions this client saw producing a response, i.e. busy with a turn
@@ -1347,9 +1410,9 @@ export function useSidebarController({
       .some((sessionId) => !processingSessionIds.has(sessionId));
 
     if (hasFinishedTurn) {
-      autoRefreshAfterCompletion();
+      scheduleAutoRefresh();
     }
-  }, [autoRefreshAfterCompletion, processingSessionIds]);
+  }, [processingSessionIds, scheduleAutoRefresh]);
 
   const updateSessionSummary = useCallback(
     // `_projectId` and `_provider` are preserved for compatibility with
