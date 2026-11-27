@@ -749,12 +749,15 @@ export function useChatSessionState({
       lastLoadedSessionKeyRef.current === sessionKey
       && Boolean(existingSlot?.fetchedAt);
 
-    // Returning from another tab must not reset pagination or scroll. Refresh
-    // a stale hydrated session through the bounded tail path instead.
+    // Entering an already-hydrated session — coming back to the Chat tab, or
+    // re-selecting the conversation on screen — must not reset pagination or
+    // scroll, but it is still the user asking to see the latest state. Pull the
+    // bounded persisted tail every time, not only once the cache has aged past
+    // a staleness threshold: a warm slot makes the entry instant, and this
+    // request is what makes it current. A genuinely different session is
+    // fetched below, which already returns its newest page.
     if (isCurrentHydratedSession) {
-      if (sessionStore.isStale(selectedSessionId)) {
-        void requestLatestMessages(selectedSessionId);
-      }
+      void requestLatestMessages(selectedSessionId);
       return;
     }
 
@@ -831,24 +834,35 @@ export function useChatSessionState({
     void refreshCoordinatorRef.current?.flushPending(activeSessionId);
   }, [activeSessionId, isActive, sessionStore]);
 
-  // External message update (e.g. WebSocket reconnect, background refresh)
+  // External message update (e.g. WebSocket reconnect, background refresh, or
+  // re-selecting the conversation already on screen). Only a new signal
+  // triggers a reload: the effect also lists `selectedSession` and
+  // `selectedProject` so it reads their current values, and reacting to their
+  // identity would fire a redundant history read on every entry — those are
+  // newly allocated objects each time a session is selected or a project
+  // refresh lands.
+  const handledExternalUpdateRef = useRef(externalMessageUpdate ?? 0);
   useEffect(() => {
-    if (!externalMessageUpdate || !selectedSession || !selectedProject) return;
+    if (!externalMessageUpdate || handledExternalUpdateRef.current === externalMessageUpdate) {
+      return;
+    }
+    // A signal that arrives mid-run is settled once the run finishes, not lost.
+    if (!selectedSession || !selectedProject || isProcessing) {
+      return;
+    }
+    handledExternalUpdateRef.current = externalMessageUpdate;
 
     const reloadExternalMessages = async () => {
       try {
-        // Skip store refresh during active streaming
-        if (!isProcessing) {
-          const shouldStickToBottom = isActiveRef.current && isNearBottom();
-          await requestLatestMessages(selectedSession.id);
+        const shouldStickToBottom = isActiveRef.current && isNearBottom();
+        await requestLatestMessages(selectedSession.id);
 
-          if (shouldStickToBottom) {
-            setTimeout(() => {
-              if (!isUserScrolledUpRef.current) {
-                scrollToBottom();
-              }
-            }, 200);
-          }
+        if (shouldStickToBottom) {
+          setTimeout(() => {
+            if (!isUserScrolledUpRef.current) {
+              scrollToBottom();
+            }
+          }, 200);
         }
       } catch (error) {
         console.error('Error reloading messages from external update:', error);

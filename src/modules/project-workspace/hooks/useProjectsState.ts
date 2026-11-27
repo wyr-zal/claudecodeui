@@ -1133,6 +1133,12 @@ export function useProjectsState({
   const handleSessionSelect = useCallback(
     (session: ProjectSession) => {
       clearSessionAttention(session.id);
+      // Selecting the conversation that is already on screen is the user
+      // asking for its latest state. A different session is fetched when the
+      // chat view opens it, so only this case needs the extra refresh signal.
+      if (selectedSessionRef.current?.id === session.id) {
+        setExternalMessageUpdate((previous) => previous + 1);
+      }
       setSelectedSession(session);
 
       if (activeTab === 'tasks' || activeTab === 'browser') {

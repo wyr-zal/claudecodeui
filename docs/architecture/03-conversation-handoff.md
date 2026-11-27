@@ -216,7 +216,7 @@ holds a provider-native id.
 | `useSessionStore` | `setActiveSession(B)` moves `activeSessionIdRef`. A's slot stays in the map with its `serverMessages`, `realtimeMessages` and pagination |
 | Re-render | `notify(sessionId)` bumps the tick only when the written session is the active one, so A's background frames cost no renders |
 | Live subscription | The `chat.subscribe` effect in `useChatSessionState.ts` fires for B with B's `lastSeq`. A is never unsubscribed — there is no `chat.unsubscribe` frame, and the only server-side audience state is each run's connection set |
-| History | If B's slot has a `fetchedAt` and the session key matches, nothing is refetched; only `isStale` (`STALE_THRESHOLD_MS = 30_000`) may trigger a bounded tail refresh. Otherwise `fetchFromServer` loads the newest `SESSION_MESSAGES_PAGE_SIZE = 20` rows |
+| History | If B's slot has a `fetchedAt` and the session key matches (returning to the Chat tab, or re-selecting the conversation on screen), the slot is kept and one bounded tail refresh is requested — always, not only when `isStale`. Otherwise `fetchFromServer` loads the newest `SESSION_MESSAGES_PAGE_SIZE = 20` rows |
 | Scroll and pagination | Reset in the same load effect and by the scroll effects; see [scrolling](./05-scrolling.md) |
 | Streaming buffer | `resetStreamingState()` clears `streamTimerRef` and `accumulatedStreamRef`. These are per-`ChatInterface`, not per-slot |
 

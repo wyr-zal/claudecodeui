@@ -82,7 +82,7 @@ runtime.
 | `SESSION_MESSAGES_PAGE_SIZE` | 20 | `src/modules/chat/utils/sessionMessagePagination.ts` | One history page: the session-open fetch, each scroll-up fetch, each tail refresh, each later bridge chunk, and the step the render window grows by on a prepend. |
 | `INITIAL_VISIBLE_MESSAGES` | 100 | `src/modules/chat/hooks/useChatSessionState.ts` | The initial render window — a tail slice of the projected list. |
 | `SEARCH_TARGET_CONTEXT_MESSAGES` | 20 | `src/modules/chat/hooks/useChatSessionState.ts` | Rows kept after a search hit when the window is widened to reach it. |
-| `STALE_THRESHOLD_MS` | 30_000 | `src/modules/chat/hooks/useSessionStore.ts` | How old `fetchedAt` may get before re-activating a session refreshes it. |
+| `STALE_THRESHOLD_MS` | 30_000 | `src/modules/chat/hooks/useSessionStore.ts` | How old `fetchedAt` may get before `isStale` reports true. Session entry no longer gates on it. |
 | `SESSION_HISTORY_REQUEST_TIMEOUT_MS` | 30_000 | `src/modules/chat/hooks/useSessionStore.ts` | `AbortSignal.timeout` on every history request. Same number as the staleness threshold, different job. |
 | `MAX_REALTIME_MESSAGES` | 500 | `src/modules/chat/hooks/useSessionStore.ts` | `realtimeMessages` per slot; the front is dropped. |
 | `INITIAL_MOUNTED_TAIL_ROWS` | 30 | `src/modules/chat/transcript/ChatMessagesPane.tsx` | Newest rendered rows that mount content on the first commit. |
@@ -168,7 +168,7 @@ These eleven names are the whole surface `useSessionStore` returns. There is no 
 | `finalizeStreaming(sessionId)` | Rewrites that row to `kind: 'text'`, `role: 'assistant'` with a fresh random id. No-op if there is no placeholder. | `stream_end`, and `complete` when a buffer is still pending. |
 | `truncateAt(sessionId, anchorId)` | Cuts `serverMessages` at the row whose `transcriptAnchorId` matches, clears `realtimeMessages` except the newest row tagged `replacesAnchorId === anchorId`, and stamps that survivor with `replacesAfterRowCount = cutIndex`. Sets `total` and `offset` to the surviving row count. | The `history_truncated` frame. |
 | `setActiveSession(sessionId \| null)` | *(no slot write)* Points `activeSessionIdRef`. Only the pointed-at session can trigger a render. | `useChatSessionState`, on session change and tab activation. |
-| `isStale(sessionId)` | *(read)* `Date.now() - fetchedAt > STALE_THRESHOLD_MS`, `true` for an unknown session. | Re-activation check. |
+| `isStale(sessionId)` | *(read)* `Date.now() - fetchedAt > STALE_THRESHOLD_MS`, `true` for an unknown session. | Age check; session entry no longer gates on it. |
 | `getMessages(sessionId)` | *(read)* Returns `slot.merged` or a shared `EMPTY`. | The render path. |
 | `getSessionSlot(sessionId)` | *(read)* Returns the slot for status/pagination reads. Does **not** create one. | Session-open hydration check, refresh gating. |
 
@@ -220,10 +220,10 @@ and a hidden tab fails it — except export, which is allowed to finish.**
 | Trigger | Call | Notes |
 | --- | --- | --- |
 | Session selected (not already hydrated) | `fetchFromServer(limit: SESSION_MESSAGES_PAGE_SIZE, offset: 0)` | Guarded by `lastLoadedSessionKeyRef` = `sessionId:projectId` plus `slot.fetchedAt`, so tab switches do not refetch. |
-| Session re-activated and stale | `requestLatestMessages` | Only when `isStale`. |
+| Session entered again — tab return, or re-selecting the conversation on screen | `requestLatestMessages` | Always, even when the cached tail is younger than `STALE_THRESHOLD_MS`; a genuinely different session is fetched by the row above instead. Re-selecting the session already on screen bumps `externalMessageUpdate`, which routes here once. |
 | `complete` frame for the viewed session | `requestLatestMessages` | In `useChatRealtimeHandlers`. |
 | `websocket_reconnected` | `requestLatestMessages`, awaited, then `chat.subscribe` | `ChatInterface.tsx` `handleWebSocketReconnect`. |
-| `externalMessageUpdate` bumped by the sidebar | `requestLatestMessages` | Skipped while the session is processing. |
+| `externalMessageUpdate` bumped — the viewed transcript changed elsewhere, or the already-open session was selected again | `requestLatestMessages` | Skipped while the session is processing; the pending signal is settled once the run ends. Only a changed counter fires; `selectedSession` identity alone does not. |
 | Scroll within 100 px of the top | `fetchMore` | Locked by `topLoadLockRef` until `scrollTop > 20`. |
 | "Load all" clicked | `fetchFromServer(limit: null)` | Also sets `visibleMessageCount = Infinity`. |
 | Search jump, unless the transcript is already fully loaded | `fetchFromServer(limit: null)` | Fetches everything; widens the window only as far as the hit needs. |
