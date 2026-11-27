@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 
-import { projectsDb, sessionPinsDb, sessionsDb } from '@/modules/database/index.js';
+import { projectsDb, sessionPinsDb, sessionsDb, userPreferencesDb } from '@/modules/database/index.js';
 import { broadcastSessionUpserted, chatRunRegistry } from '@/modules/websocket/index.js';
 import { providerRegistry } from '@/modules/providers/provider.registry.js';
 import {
@@ -319,6 +319,40 @@ async function isClaudeCliTurnOver(jsonlPath: string | null): Promise<boolean> {
   }
 }
 
+function resolveTitleFallbackModel(
+  provider: LLMProvider,
+  options: { model?: string | null; userId?: number | null },
+): string | undefined {
+  const explicitModel = typeof options.model === 'string' ? options.model.trim() : '';
+  if (explicitModel && explicitModel !== 'default') {
+    return explicitModel;
+  }
+
+  const userId = options.userId;
+  if (typeof userId !== 'number' || !Number.isInteger(userId) || userId <= 0) {
+    return undefined;
+  }
+
+  try {
+    const chatDefaults = userPreferencesDb.getPreferences(userId).chatDefaults;
+    if (!chatDefaults || typeof chatDefaults !== 'object' || Array.isArray(chatDefaults)) {
+      return undefined;
+    }
+    const providerDefaults = (chatDefaults as Record<string, unknown>)[provider];
+    if (!providerDefaults || typeof providerDefaults !== 'object' || Array.isArray(providerDefaults)) {
+      return undefined;
+    }
+    const storedModel = (providerDefaults as Record<string, unknown>).model;
+    if (typeof storedModel !== 'string') {
+      return undefined;
+    }
+    const trimmed = storedModel.trim();
+    return trimmed && trimmed !== 'default' ? trimmed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export const sessionsService = {
   /**
    * Lists provider ids that can load session history and normalize live messages.
@@ -535,6 +569,12 @@ export const sessionsService = {
     provider: LLMProvider,
     projectPath: string,
     initialMessage: string,
+    options: {
+      model?: string | null;
+      userId?: number | null;
+      /** Test seam replacing background title scheduling; production callers omit this. */
+      scheduleTitle?: typeof scheduleSessionTitleGeneration;
+    } = {},
   ): CreateAppSessionResult {
     // A caller may name the folder in Windows form (`F:\work`) while this host
     // is WSL. The row's `project_path` becomes the run's working directory, so
@@ -561,12 +601,14 @@ export const sessionsService = {
     sessionsDb.createAppSession(sessionId, provider, normalizedProjectPath, sessionName);
     // The truncated name is what the sidebar shows this instant; the model's
     // own title replaces it moments later, once it has read the message.
-    scheduleSessionTitleGeneration({
+    const scheduleTitle = options.scheduleTitle ?? scheduleSessionTitleGeneration;
+    scheduleTitle({
       sessionId,
       provider,
       projectPath: normalizedProjectPath,
       firstMessage: initialMessage,
       initialName: sessionName,
+      model: resolveTitleFallbackModel(provider, options),
     });
 
     return {
