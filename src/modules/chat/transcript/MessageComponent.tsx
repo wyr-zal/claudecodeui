@@ -512,7 +512,11 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                     copy and speak it is not gated on the copy control, and an
                     exported transcript keeps it wherever the footer renders. */}
                 <MessageModelLabel model={message.model} />
-                {!isGrouped && <span>{formattedTime}</span>}
+                {/* When this reply finished. Shown on every completed reply,
+                    grouped or not, so the turn's last message carries the time
+                    the task completed; a reply still streaming has no finish
+                    time yet, and its timestamp is the moving frontier. */}
+                {!message.isStreaming && <span>{formattedTime}</span>}
               </div>
             )}
           </div>
